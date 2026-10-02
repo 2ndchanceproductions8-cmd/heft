@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Heft" />
+    <script>
+      // First paint in the saved theme. ThemeEffect (src/components/AppShell.tsx) mirrors the theme setting
+      // into localStorage; IndexedDB stays the source of truth. Dark is the default (first launch, blocked
+      // storage). iOS reads the status-bar style at launch: light pages need 'default' (dark glyphs).
+      (function () {
+        try {
+          var t = localStorage.getItem('heft.theme');
+          var d = t !== 'light' && (t !== 'system' || matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', d);
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.setAttribute('content', d ? '#000000' : '#f2f2f7');
+          var s = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+          if (s) s.setAttribute('content', d ? 'black-translucent' : 'default');
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <title>Heft</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

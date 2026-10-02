@@ -1,0 +1,186 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ design tokens
+   Light values on :root, dark on .dark (the default — <html class="dark">). Components use the
+   semantic Tailwind colors below (bg-surface, text-muted, border-line, bg-accent ...), never raw hex. */
+:root {
+  --c-bg: #f2f2f7;
+  --c-surface: #ffffff;
+  --c-surface-2: #f0f0f4;
+  --c-surface-3: #e4e4ea;
+  --c-line: #e2e2e8;
+  --c-fg: #0c0c0e;
+  --c-muted: #6c6c75;
+  --c-faint: #a3a3ad;
+  --c-accent: #2f7cf6;
+  --c-accent-soft: rgb(47 124 246 / 0.12);
+  --c-on-accent: #ffffff;
+  --c-success: #17a34a;
+  --c-success-soft: rgb(23 163 74 / 0.13);
+  --c-warn: #a87a00;
+  --c-warn-soft: rgb(211 155 0 / 0.14);
+  --c-danger: #e5484d;
+  --c-danger-soft: rgb(229 72 77 / 0.12);
+  --c-drop: #8b5cf6;
+  --c-drop-soft: rgb(139 92 246 / 0.14);
+  --c-gold: #b87400;
+  --c-gold-soft: rgb(242 162 12 / 0.16);
+  --c-backdrop: rgb(0 0 0 / 0.4);
+  color-scheme: light;
+}
+
+.dark {
+  --c-bg: #000000;
+  --c-surface: #121214;
+  --c-surface-2: #1c1c20;
+  --c-surface-3: #2a2a30;
+  --c-line: #232328;
+  --c-fg: #f4f4f6;
+  --c-muted: #9b9ba6;
+  --c-faint: #5c5c66;
+  --c-accent: #3d8bff;
+  --c-accent-soft: rgb(61 139 255 / 0.16);
+  --c-on-accent: #ffffff;
+  --c-success: #2fbf71;
+  --c-success-soft: rgb(47 191 113 / 0.15);
+  --c-warn: #f5c542;
+  --c-warn-soft: rgb(245 197 66 / 0.14);
+  --c-danger: #ff5c63;
+  --c-danger-soft: rgb(255 92 99 / 0.14);
+  --c-drop: #a78bfa;
+  --c-drop-soft: rgb(167 139 250 / 0.16);
+  --c-gold: #ffb627;
+  --c-gold-soft: rgb(255 182 39 / 0.15);
+  --c-backdrop: rgb(0 0 0 / 0.62);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-line: var(--c-line);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-on-accent: var(--c-on-accent);
+  --color-success: var(--c-success);
+  --color-success-soft: var(--c-success-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-drop: var(--c-drop);
+  --color-drop-soft: var(--c-drop-soft);
+  --color-gold: var(--c-gold);
+  --color-gold-soft: var(--c-gold-soft);
+  --color-backdrop: var(--c-backdrop);
+}
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --animate-sheet-up: sheet-up 0.32s cubic-bezier(0.2, 0.9, 0.25, 1);
+  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-pop: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
+  --animate-toast: toast-in 0.25s cubic-bezier(0.2, 0.9, 0.25, 1);
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop {
+    0% {
+      transform: scale(0.6);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @keyframes toast-in {
+    from {
+      transform: translateY(-12px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+}
+
+/* Safe-area helpers for notched phones (viewport-fit=cover). */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility mb-safe {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--c-bg);
+    color: var(--c-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: none;
+  }
+  #root {
+    min-height: 100dvh;
+  }
+  button {
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+  button:disabled {
+    cursor: default;
+  }
+  /* iOS zooms inputs under 16px — keep them at 16px. */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+}
