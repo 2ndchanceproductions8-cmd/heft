@@ -17,17 +17,23 @@ import type {
 } from '../types';
 import { displayDistanceAny, displayWeight, distanceUnitForType } from './units';
 import { recomputeAllPRs } from './workouts';
+import { recomputeMeal } from './nutrition/math';
+import type { Food, Meal, NutritionProfile } from './nutrition/types';
 
 /*
  * Full-device backup (JSON) and a flat CSV export of every logged set.
  *
- * Backup format: { app: "heft", version: 1, exportedAt, data: { workouts, routines, folders, customExercises,
- * overrides, measurements, settings, active, media: [{ id, type, createdAt, width, height, dataUrl }] } }.
- * Photos are embedded as base64 data URLs so one file restores everything on a new phone.
+ * Backup format: { app: "heft", version: 2, exportedAt, data: { workouts, routines, folders, customExercises,
+ * overrides, measurements, settings, active, meals, foods, nutrition, media: [{ id, type, createdAt, width,
+ * height, dataUrl }] } }. Photos are embedded as base64 data URLs so one file restores everything on a new phone.
+ *
+ * Version 2 added the Food tab (meals, foods, nutrition). A version-1 file has no food data, so restoring one
+ * replaces the workout side only and KEEPS this device's food log (and the photos its meals use) - an old
+ * workout backup must never wipe meals. API keys are never in a backup (lib/nutrition/keys.ts).
  */
 
 export const BACKUP_APP = 'heft';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
 export interface BackupMedia extends Omit<Media, 'blob'> {
   dataUrl: string;
@@ -43,6 +49,10 @@ export interface BackupData {
   settings: Settings | null;
   active: ActiveWorkout | null;
   media: BackupMedia[];
+  /** v2+ (empty when restoring a v1 file). */
+  meals: Meal[];
+  foods: Food[];
+  nutrition: NutritionProfile | null;
 }
 
 export interface BackupFile {
@@ -63,6 +73,8 @@ export interface BackupCounts {
   media: number;
   settings: boolean;
   active: boolean;
+  meals: number;
+  foods: number;
 }
 
 // ------------------------------------------------------------------ base64 helpers (browser + node)
@@ -113,7 +125,7 @@ export function dataUrlToBlob(dataUrl: string): Blob {
 export async function buildBackup(): Promise<BackupFile> {
   const snap = await db.transaction(
     'r',
-    [db.workouts, db.routines, db.folders, db.customExercises, db.overrides, db.measurements, db.settings, db.active, db.media],
+    [db.workouts, db.routines, db.folders, db.customExercises, db.overrides, db.measurements, db.settings, db.active, db.media, db.meals, db.foods, db.nutrition],
     async () => ({
       workouts: await db.workouts.orderBy('startedAt').toArray(),
       routines: await db.routines.toArray(),
@@ -124,6 +136,9 @@ export async function buildBackup(): Promise<BackupFile> {
       settings: (await db.settings.get('settings')) ?? null,
       active: (await db.active.get('current'))?.workout ?? null,
       media: await db.media.toArray(),
+      meals: await db.meals.orderBy('at').toArray(),
+      foods: await db.foods.toArray(),
+      nutrition: (await db.nutrition.get('profile')) ?? null,
     }),
   );
   const media: BackupMedia[] = [];
@@ -165,7 +180,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const hasId = (v: unknown): v is { id: string } & Record<string, unknown> => isObj(v) && typeof v.id === 'string' && !!v.id;
 
-const ARRAY_KEYS = ['workouts', 'routines', 'folders', 'customExercises', 'overrides', 'measurements', 'media'] as const;
+const ARRAY_KEYS = ['workouts', 'routines', 'folders', 'customExercises', 'overrides', 'measurements', 'media', 'meals', 'foods'] as const;
 const LABEL: Record<(typeof ARRAY_KEYS)[number], string> = {
   workouts: 'workout',
   routines: 'routine',
@@ -174,6 +189,8 @@ const LABEL: Record<(typeof ARRAY_KEYS)[number], string> = {
   overrides: 'exercise setting',
   measurements: 'measurement',
   media: 'photo',
+  meals: 'meal',
+  foods: 'food',
 };
 
 /** Checks the shape of a parsed backup and returns it normalized. Throws an Error with a readable message. */
@@ -208,6 +225,12 @@ export function validateBackup(raw: unknown): BackupFile {
   lists.measurements.forEach((m, i) => {
     if (typeof m.date !== 'number') throw new Error(`This backup is damaged (measurement #${i + 1} has no date).`);
   });
+  lists.meals.forEach((m, i) => {
+    if (typeof m.at !== 'number' || !Array.isArray(m.items)) throw new Error(`This backup is damaged (meal #${i + 1} is incomplete).`);
+  });
+  lists.foods.forEach((f, i) => {
+    if (!isObj(f.per100g)) throw new Error(`This backup is damaged (food #${i + 1} has no nutrients).`);
+  });
   lists.media.forEach((m, i) => {
     if (typeof m.dataUrl !== 'string' || !m.dataUrl.startsWith('data:')) {
       throw new Error(`This backup is damaged (photo #${i + 1} has no image data).`);
@@ -216,6 +239,8 @@ export function validateBackup(raw: unknown): BackupFile {
 
   const settings = data.settings == null ? null : data.settings;
   if (settings !== null && !isObj(settings)) throw new Error('This backup is damaged (settings).');
+  const nutrition = data.nutrition == null ? null : data.nutrition;
+  if (nutrition !== null && !isObj(nutrition)) throw new Error('This backup is damaged (food targets).');
   const active = data.active == null ? null : data.active;
   if (active !== null && (!hasId(active) || !Array.isArray(active.exercises) || typeof active.startedAt !== 'number')) {
     throw new Error('This backup is damaged (workout in progress).');
@@ -234,6 +259,15 @@ export function validateBackup(raw: unknown): BackupFile {
     ...m,
     photoIds: Array.isArray(m.photoIds) ? m.photoIds : [],
   }));
+  // Re-derive cached fields (day, totals) so a hand-edited or older file can't carry stale sums.
+  const meals = (lists.meals as unknown as Meal[]).map((m) =>
+    recomputeMeal({
+      ...m,
+      photoIds: Array.isArray(m.photoIds) ? m.photoIds : [],
+      aiCalls: Array.isArray(m.aiCalls) ? m.aiCalls : [],
+      serves: typeof m.serves === 'number' ? m.serves : 1,
+    }),
+  );
   const customExercises = (lists.customExercises as unknown as CustomExercise[]).map((c) => ({
     ...c,
     secondary: Array.isArray(c.secondary) ? c.secondary : [],
@@ -254,6 +288,9 @@ export function validateBackup(raw: unknown): BackupFile {
       settings: settings ? ({ ...(settings as object), id: 'settings' } as Settings) : null,
       active: active as ActiveWorkout | null,
       media: lists.media as unknown as BackupMedia[],
+      meals,
+      foods: lists.foods as unknown as Food[],
+      nutrition: nutrition ? ({ ...(nutrition as object), id: 'profile' } as NutritionProfile) : null,
     },
   };
 }
@@ -269,12 +306,17 @@ export function parseBackup(text: string): BackupFile {
   return validateBackup(raw);
 }
 
+/** True when restoring this file keeps the device's food log (a pre-Food-tab, version-1 backup). */
+export const keepsFoodLog = (b: Pick<BackupFile, 'version'>) => b.version < 2;
+
 /**
  * Replace ALL data on this device with the backup (one read-write transaction: nothing changes if it
- * fails), then rebuild PR badges. Returns what was restored.
+ * fails), then rebuild PR badges. Returns what was restored. A version-1 file (made before the Food tab)
+ * leaves the food log - meals, foods, targets and the photos those meals use - exactly as it is.
  */
 export async function importBackup(text: string): Promise<BackupCounts> {
-  const { data } = parseBackup(text);
+  const { version, data } = parseBackup(text);
+  const keepFood = keepsFoodLog({ version });
   // Decode photos before opening the transaction (no non-Dexie async work inside it).
   const media: Media[] = data.media.map(({ dataUrl, ...meta }) => {
     const blob = dataUrlToBlob(dataUrl);
@@ -282,7 +324,12 @@ export async function importBackup(text: string): Promise<BackupCounts> {
   });
 
   await db.transaction('rw', db.tables, async () => {
-    await Promise.all(db.tables.map((t) => t.clear()));
+    // Photos the kept meals point at must survive the media wipe.
+    const keptMealMedia = keepFood
+      ? await db.media.bulkGet([...new Set((await db.meals.toArray()).flatMap((m) => m.photoIds))])
+      : [];
+    const foodTables = new Set<string>([db.meals.name, db.foods.name, db.nutrition.name]);
+    await Promise.all(db.tables.filter((t) => !(keepFood && foodTables.has(t.name))).map((t) => t.clear()));
     await db.workouts.bulkPut(data.workouts);
     await db.routines.bulkPut(data.routines);
     await db.folders.bulkPut(data.folders);
@@ -290,8 +337,14 @@ export async function importBackup(text: string): Promise<BackupCounts> {
     await db.overrides.bulkPut(data.overrides);
     await db.measurements.bulkPut(data.measurements);
     await db.media.bulkPut(media);
+    if (keptMealMedia.length) await db.media.bulkPut(keptMealMedia.filter((m): m is Media => !!m));
     if (data.settings) await db.settings.put(data.settings);
     if (data.active) await db.active.put({ id: 'current', workout: data.active });
+    if (!keepFood) {
+      await db.meals.bulkPut(data.meals);
+      await db.foods.bulkPut(data.foods);
+      if (data.nutrition) await db.nutrition.put(data.nutrition);
+    }
   });
   await recomputeAllPRs();
 
@@ -305,6 +358,8 @@ export async function importBackup(text: string): Promise<BackupCounts> {
     media: media.length,
     settings: !!data.settings,
     active: !!data.active,
+    meals: keepFood ? 0 : data.meals.length,
+    foods: keepFood ? 0 : data.foods.length,
   };
 }
 

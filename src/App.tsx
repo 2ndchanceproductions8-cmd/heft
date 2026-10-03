@@ -15,6 +15,7 @@ import { ExerciseFormPage } from './features/exercises/ExerciseFormPage';
 import { SettingsPage } from './features/progress/SettingsPage';
 import { AppleHealthPage } from './features/progress/AppleHealthPage';
 import { Loading } from './components/ui';
+import { nutritionFullRoutes, nutritionTabRoutes } from './features/nutrition/routes';
 
 // Chart pages pull in Recharts (~400 KB) — load them on demand (the service worker precaches the chunks).
 function lazyPage(load: () => Promise<ComponentType>) {
@@ -48,6 +49,7 @@ const router = createHashRouter([
             errorElement: <RouteError tabBar />,
             children: [
               { path: '/workout', element: <WorkoutHomePage /> },
+              ...nutritionTabRoutes,
               { path: '/routines/:id', element: <RoutineDetailPage /> },
               { path: '/history', element: <HistoryPage /> },
               { path: '/history/:id', element: <WorkoutDetailPage /> },
@@ -72,6 +74,7 @@ const router = createHashRouter([
           { path: '/history/:id/edit', element: <EditWorkoutPage /> },
           { path: '/exercises/new', element: <ExerciseFormPage /> },
           { path: '/exercises/:id/edit', element: <ExerciseFormPage /> },
+          ...nutritionFullRoutes,
         ],
       },
       { path: '*', element: <Navigate to="/workout" replace /> },

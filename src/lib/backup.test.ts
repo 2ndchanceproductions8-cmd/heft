@@ -143,7 +143,7 @@ describe('exportBackup → importBackup', () => {
     const text = await blob.text();
 
     const parsed = JSON.parse(text);
-    expect(parsed).toMatchObject({ app: 'heft', version: 1 });
+    expect(parsed).toMatchObject({ app: 'heft', version: 2 });
     expect(typeof parsed.exportedAt).toBe('number');
     expect(parsed.data.media[0].dataUrl.startsWith('data:image/jpeg;base64,')).toBe(true);
     expect(parsed.data.media[0].blob).toBeUndefined();
@@ -165,6 +165,8 @@ describe('exportBackup → importBackup', () => {
       media: 1,
       settings: true,
       active: true,
+      meals: 0,
+      foods: 0,
     });
 
     const after = await snapshot();

@@ -171,3 +171,25 @@ export function formatDistanceForType(
   if (v == null) return '-';
   return withUnit ? `${formatNumber(v)} ${u}` : formatNumber(v);
 }
+
+// ---------- food mass (Food tab) ----------
+// Food is stored in GRAMS (nutrition databases are per 100 g). lb users see ounces, kg users see grams.
+export const G_PER_OZ = 28.349523125;
+export type MassUnit = 'g' | 'oz';
+/** The food-mass unit for a weight unit: lb → oz, kg → g. */
+export const massUnitFor = (unit: Unit): MassUnit => (unit === 'lb' ? 'oz' : 'g');
+export const gToOz = (g: number) => g / G_PER_OZ;
+export const ozToG = (oz: number) => oz * G_PER_OZ;
+/** Grams in a mass unit, rounded for display/editing: whole grams, ounces to 0.1. */
+export function displayMass(g: number | null | undefined, mu: MassUnit): number | null {
+  if (g == null || Number.isNaN(g)) return null;
+  return mu === 'g' ? Math.round(g) : round(gToOz(g), 1);
+}
+/** A typed value in a mass unit back to grams. */
+export const massToG = (value: number, mu: MassUnit) => (mu === 'g' ? value : ozToG(value));
+/** "150 g" / "5.3 oz" */
+export function formatGrams(g: number | null | undefined, mu: MassUnit): string {
+  const v = displayMass(g, mu);
+  if (v == null) return '-';
+  return `${formatNumber(v, 1)} ${mu}`;
+}

@@ -15,7 +15,7 @@ const UPDATE_CHECK_MS = 60 * 60 * 1000;
 
 /** Full-screen flows (logger, finish screen, editors): never reload under them without the user's say-so. */
 const FULL_SCREEN_ROUTE =
-  /^#\/(?:workout\/(?:active|finish)|routines\/new|routines\/[^/?]+\/edit|history\/[^/?]+\/edit|exercises\/new|exercises\/[^/?]+\/edit)(?:[/?]|$)/;
+  /^#\/(?:workout\/(?:active|finish)|routines\/new|routines\/[^/?]+\/edit|history\/[^/?]+\/edit|exercises\/new|exercises\/[^/?]+\/edit|nutrition\/(?:log|scan|meal\/[^/?]+))(?:[/?]|$)/;
 
 /**
  * Safety net: a lazy page chunk that fails to load (stale page, evicted cache) reloads the app once, which

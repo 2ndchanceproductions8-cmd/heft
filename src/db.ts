@@ -10,6 +10,7 @@ import type {
   Settings,
   Workout,
 } from './types';
+import type { Food, Meal, NutritionProfile } from './lib/nutrition/types';
 
 export interface ActiveRecord {
   id: 'current';
@@ -26,6 +27,10 @@ export class HeftDB extends Dexie {
   media!: EntityTable<Media, 'id'>;
   settings!: EntityTable<Settings, 'id'>;
   active!: EntityTable<ActiveRecord, 'id'>;
+  // v2 — Food tab (lib/nutrition)
+  meals!: EntityTable<Meal, 'id'>;
+  foods!: EntityTable<Food, 'id'>;
+  nutrition!: EntityTable<NutritionProfile, 'id'>;
 
   constructor(name = 'heft') {
     super(name);
@@ -39,6 +44,12 @@ export class HeftDB extends Dexie {
       media: 'id',
       settings: 'id',
       active: 'id',
+    });
+    // v2 adds the Food tab's tables. Dexie keeps every v1 table and its rows; only new stores are created.
+    this.version(2).stores({
+      meals: 'id, day, at, status',
+      foods: 'id, barcode, lastUsedAt',
+      nutrition: 'id',
     });
   }
 }

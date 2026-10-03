@@ -49,7 +49,8 @@ export default defineConfig({
       workbox: {
         // App shell + catalog are precached; the 1,700 exercise frames are cached on first view
         // (Settings → "Download all exercise images" pre-fills that cache for full offline use).
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        // wasm = the self-hosted zxing barcode decoder (Food tab), so barcode photos decode offline.
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,wasm}'],
         globIgnores: ['ex/**'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: 'index.html',
