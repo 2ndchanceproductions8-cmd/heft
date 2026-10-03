@@ -30,7 +30,7 @@ export function aiErrorMessage(e: Pick<AiError, 'code' | 'message'>): string {
     no_key: NO_KEY_MESSAGE,
     key_rejected: 'Claude rejected your key — check it in Food settings.',
     forbidden: detail ? `Claude refused access: ${detail}` : 'Claude refused access for this key — check it in Food settings.',
-    refused: 'Claude declined this photo.',
+    refused: 'Claude declined to analyze this meal. Try another photo, or enter it manually.',
     rate_limited: detail ? `Claude is limiting requests: ${detail}` : 'Claude is limiting requests right now — try again in a minute.',
     overloaded: 'Claude is overloaded right now — try again in a minute.',
     bad_request: detail ? `Claude couldn't use this request: ${detail}` : "Claude couldn't use this request.",

@@ -151,7 +151,11 @@ your recent foods) or by **quick add** (just calories, macros optional). The eng
   → `done` | `failed` (`error` says why; photos kept for Retry). `input` = {kind photo/text/barcode/search/quick,
   description, weightG}, `photoIds` (db.media; referenced, so never swept), `serves` 1–20, `items`, `totals`
   (cache), `confidence`, `scaleReference`, `notes`, `angles`, `aiCalls` (append-only billed Claude calls,
-  failures included: Food settings shows this month's spend).
+  failures included).
+- `aiSpend` (indexes `at`, `mealId`): the spend LEDGER, one row per billed call, written by `store.ts` in the same
+  transaction whenever a meal's `aiCalls` grows (and by `recordSpend` when the meal vanished mid-call). Food
+  settings sums it by CALL time, so deleting or back-dating a meal never hides money spent. Not in backups: a v2
+  restore rebuilds it from the restored meals; a v1 restore leaves it alone.
 - `MealItem`: nutrients = `per100g × grams/100 × serves` (per100g is the source of truth; grams per serving are
   user-editable, `baselineGrams` drives Reset). Quick-add items carry `fixed` totals instead (not scaled by
   grams). `source` = `usda` | `off` | `estimate` | `manual`; `name` is never overwritten by a match
@@ -162,7 +166,9 @@ your recent foods) or by **quick add** (just calories, macros optional). The eng
   (sex, birth year, height, body weight) are NOT duplicated: they are Heft's `Settings` + the newest weigh-in,
   edited from either Settings page.
 - Every meal write goes through `store.ts` (`createMeal`, `updateMeal`, item helpers), which always runs
-  `recomputeMeal()`, so `day` and `totals` can't drift from the items. While a meal is `analyzing` only the
+  `recomputeMeal()`, so `totals` can't drift from the items. `day` is derived when the meal is created and
+  re-derived ONLY when `at` changes (re-deriving on every edit would move a meal to another day after a
+  time-zone change); `atForDay` builds times from calendar fields, so DST days keep their wall-clock hour. While a meal is `analyzing` only the
   analysis may write (`{ force: true }`); any other write throws `MealBusyError`.
 - Only `done` meals count toward a day (`countsTowardDay`, `sumMeals`); the Diary says so under the list.
 
@@ -176,26 +182,38 @@ your recent foods) or by **quick add** (just calories, macros optional). The eng
   never passed off as a database value. Search, scan and quick add use no AI at all.
 - USDA quirk (measured 2026-10-03): any `dataType` list containing "Survey (FNDDS)" gets HTTP 400. `usda.ts`
   tries the filter, then without commas, then no filter (Branded rows ranked down), and remembers a rejected
-  filter for 3 days (localStorage `heft-fdc-datatype-rejected`, a timestamp, not a key) so a DEMO_KEY meal
-  doesn't spend three requests per item.
+  filter for 3 days (localStorage `heft-fdc-datatype-rejected`, a timestamp, not a key) as soon as both filtered
+  variants 400, so a DEMO_KEY meal doesn't spend three requests per item. Each item's 6 s lookup budget starts
+  when it may send (not while it waits for that one probe). Nutrients: energy 208 → 958 → 957, carbs 205 → 205.2,
+  sugar 269 → 269.3. HTTP 401/403 = `key_rejected` (shown as such, never as "no connection").
 - Network rules: USDA and OFF are GET-only with no custom headers (no CORS preflight). Claude is called from the
   phone with the official SDK (`dangerouslyAllowBrowser`, the user's own key), model `claude-opus-5-5`,
-  structured output (`schema.ts` still validates and clamps), SDK retries off (`foodAi.ts` decides), and every
-  billed response is recorded in `aiCalls`.
+  structured output (`schema.ts` still validates and clamps), server-side refusal fallback (`fallbacks:
+  'default'`), no `thinking` param (always on for Opus 5.5), effort `medium`, 600 s timeout, SDK retries off
+  (`foodAi.ts` decides), and every billed response is recorded in `aiCalls`. The prompt never asks Claude to
+  show its reasoning (Opus 5.5 declines that as `reasoning_extraction`, and fallbacks don't retry it).
+- Photos are saved ≤ 2048 px (Opus 5.5 reads up to 2576; a coin must stay legible for the scale procedure),
+  stepping down until the base64 fits Claude's 5 MB image limit.
 
 ### Confidence cap (`confidence.ts finalConfidence`)
-Start from Claude's level; +1 when every item matched a database; +1 when the user weighed the food. Then the
-cap, applied last and always: **without a user weight or a scale reference found in the photo, confidence is at
+Start from Claude's level; +1 when every item matched a database; +1 when the user weighed the food AND every
+item matched (a weight can't rescue a misidentified food — SnapPlate's rule). Then the cap, applied last and always: **without a user weight or a scale reference found in the photo, confidence is at
 most `medium`** (a portion judged from pixels is a guess). Claude saying `low` with unmatched items also stays at
 most `medium`.
 
-### API keys are device-only (`lib/nutrition/keys.ts`)
+### API keys stay on the device (`lib/nutrition/keys.ts`)
 - The repo and the Pages site are **public**: no key is bundled (no `VITE_` env var), committed, or in a fixture
   (USDA fixtures were recorded with `DEMO_KEY`, `api_key` stripped). `guard.test.ts` fails on a real-looking
   Anthropic key or a `VITE_…KEY` read under `src/`.
 - Keys live only in this browser's localStorage (`heft-key:anthropic`, `heft-key:fdc`): never in Dexie, never in
   a backup (`backup.food.test.ts` checks), never logged, never in a printed URL; shown masked (`maskKey`). The
   installed home-screen app has storage separate from Safari, so keys are pasted inside the app.
+- CAVEAT: localStorage is per ORIGIN, and Heft shares `2ndchanceproductions8-cmd.github.io` with any other Pages
+  site on the account (e.g. trading-sims). Scripts on those pages can read these keys in a browser tab (the iOS
+  home-screen app's storage is separate). Hence the advice: a separate, spend-limited key used only for Heft. A
+  custom (sub)domain for Heft would remove the overlap.
+- A Claude key never goes to USDA: `isAnthropicSecret` (matches `sk-ant-` anywhere) is refused by the USDA field
+  and `fdcKeyOrDemo()` falls back to DEMO_KEY rather than send it.
 - With no personal USDA key, lookups use the shared `DEMO_KEY` (~10 requests an hour); the UI says so.
 - Settings → "Delete all data" also calls `clearNutritionKeys()`, so a wiped phone forgets the keys.
 
@@ -215,10 +233,12 @@ replace the computed values; missing body fields return `missing` instead of tar
 Capture → Analyze sets `pending` and opens `/nutrition/meal/:id`, which starts the run when a Claude key is saved
 (without one the meal waits as `pending` and runs once a key is added). The run: `analyzing` (force) → Claude →
 USDA grounding → confidence → `done` (title from the food names when empty; only the first photo is kept,
-re-encoded ≤ 640 px, so backups stay small) or `failed` with a readable message. Runs are tracked per app
+re-encoded ≤ 640 px via `finishMealPhotos`, the ONE shrink path every photo meal that reaches `done` uses —
+analysis, "Enter manually", a draft folded into a search or scan) or `failed` with a readable message. Runs are tracked per app
 session: a meal left `analyzing` with no run here was interrupted (iOS killed the app), and
 `analysisInterrupted(meal)` makes the UI offer Retry instead of an endless spinner. `runAnalysis` never throws and
-a second call for the same meal joins the first.
+a second call for the same meal joins the first. While a run is in flight (and while any bottom sheet is open)
+`lib/busy.ts` is marked, and `lib/pwa.tsx` won't apply a waiting app update in the background.
 
 ### Routes (`features/nutrition/routes.tsx`, all lazy)
 | Route | Page |
@@ -248,13 +268,13 @@ is used instead when the browser has one.
 | `types.ts` | `Meal`, `MealItem`, `MealInput`, `MealStatus`, `AiCall`, `Food`, `FoodChoice`, `Per100g`, `Totals`, `NutritionProfile`, `Body`, `Targets`, `Confidence`, `NutrientSource`, `LookupStatus`, `Activity`, `Goal`, `Pace` |
 | `math.ts` | pure: `emptyTotals`, `scalePer100g`, `addTotals`, `multiplyTotals`, `clampServes`, `MAX_SERVES`, `itemServing`, `itemNutrients`, `mealTotals`, `recomputeMeal`, `countsTowardDay`, `sumMeals`, `remaining(target, eaten)`, `per100gFromEstimate`, `dayKey`, `dayStart`, `shiftDay`, `atForDay(day, now)`, `kcal`, `macroG` |
 | `targets.ts` | `computeTargets(profile, body)`, `bmr`, `tdee`, `calorieAdjustment`, `bodyFromSettings(settings, kg, now)` (body, or the `missing` fields), `DEFAULT_NUTRITION`, `ACTIVITY_FACTOR` / `ACTIVITY_LABEL` / `ACTIVITY_SUBTITLE`, `GOAL_LABEL`, `PACE_LABEL`, `BODY_FIELD_LABEL`, `KG_PER_LB` |
-| `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)`, `useTargets` / `loadTargets`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
-| `keys.ts` | `getAnthropicKey` / `setAnthropicKey`, `getFdcKey` / `setFdcKey`, `fdcKeyOrDemo`, `FDC_DEMO_KEY`, `clearNutritionKeys`, `maskKey`, `looksLikeAnthropicKey`, `useNutritionKeys()` |
+| `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)` / `loadAiSpend` / `recordSpend` (the ledger), `useTargets` / `loadTargets`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
+| `keys.ts` | `getAnthropicKey` / `setAnthropicKey`, `getFdcKey` / `setFdcKey`, `fdcKeyOrDemo`, `FDC_DEMO_KEY`, `isAnthropicSecret`, `clearNutritionKeys`, `maskKey`, `looksLikeAnthropicKey`, `useNutritionKeys()` |
 | `burn.ts` | display-only: `useDayBurn(day)`, `loadDayBurn`, `sumActiveKcal` |
 | `usda.ts` | `searchFoods(query, {pageSize, signal})` → `{status: ok/rate_limited/failed, foods, demoKey}`, `bestMatch(query, signal)`, ranking (`rankFoods`, `scoreCandidate`, `tokens`), `extractPer100g`, `choiceFromFdc`, `timeoutSignal`, `NUTRIENT`, `FDC_DATA_TYPES`, `resetUsdaDataTypeMemo` (tests) |
 | `off.ts` | `lookupBarcode(code, signal)` → `{status: ok/not_found/unavailable, food}` (`not_found` only when OFF says so), `choiceFromOff`, `offPer100g`, `offServingG` |
 | `barcode.ts` | `normalizeBarcode(raw, format?)` (EAN-13 / EAN-8 / UPC-A / UPC-E with check digit), `expandUpcE`, `gs1CheckDigit`, `decodeBarcodeFromImage(blob)` (null = none found; throws only if the reader can't load) |
-| `photos.ts` | `saveMealPhoto(file)` (≤ 1568 px JPEG; `PhotoError` for undecodable files), `shrinkMealPhotos(ids)` (keep one ≤ 640 px) |
+| `photos.ts` | `saveMealPhoto(file)` (≤ 2048 px JPEG, stepped down to fit 5 MB; `PhotoError` for undecodable files), `shrinkMealPhotos(ids)` (keep one ≤ 640 px), `finishMealPhotos(mealId)` (the shrink path for every finished photo meal; never throws) |
 | `images.ts` | `loadImagesForAi(photoIds)` (base64 blocks, ≤ 4, type and size checked; `ImageLoadError`), `blobToBase64` |
 | `prompt.ts` | `buildPrompt({imageCount, description, weightG})` (multi-angle, scale reference and user-context rules) |
 | `schema.ts` | `MEAL_SCHEMA` (structured output), `parseMealOutput` (validate + clamp; `MealOutputError`), `clampWeightG` |

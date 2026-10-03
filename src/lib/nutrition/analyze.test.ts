@@ -145,7 +145,7 @@ describe('runAnalysis', () => {
     await runAnalysis(meal.id, deps({ analyzeMeal: async () => Promise.reject(new AiError('refused', 'declined', [refusedCall])), finishPhotos: shrink }));
     const m = (await db.meals.get(meal.id))!;
     expect(m.status).toBe('failed');
-    expect(m.error).toBe('Claude declined this photo.');
+    expect(m.error).toBe('Claude declined to analyze this meal. Try another photo, or enter it manually.');
     expect(m.photoIds).toEqual(['m_a', 'm_b']);
     expect(m.items).toEqual([]);
     expect(m.aiCalls).toHaveLength(2);
@@ -248,7 +248,7 @@ describe('helpers', () => {
   it('every AiError code has a friendly message', () => {
     expect(aiErrorMessage({ code: 'key_rejected', message: '' })).toBe('Claude rejected your key — check it in Food settings.');
     expect(aiErrorMessage({ code: 'network', message: '' })).toBe("No connection. Retry when you're back online.");
-    expect(aiErrorMessage({ code: 'refused', message: '' })).toBe('Claude declined this photo.');
+    expect(aiErrorMessage({ code: 'refused', message: '' })).toBe('Claude declined to analyze this meal. Try another photo, or enter it manually.');
     expect(aiErrorMessage({ code: 'rate_limited', message: 'This request would exceed your workspace spend limit.' })).toContain('spend limit');
     expect(aiErrorMessage({ code: 'forbidden', message: 'No access to this model.' })).toContain('No access to this model.');
     for (const code of ['no_key', 'overloaded', 'bad_request', 'timeout', 'truncated', 'invalid_output', 'unknown'] as const) {
