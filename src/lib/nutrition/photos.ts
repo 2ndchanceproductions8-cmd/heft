@@ -1,5 +1,6 @@
 import { db } from '../../db';
 import { uid } from '../ids';
+import { updateMeal } from './store';
 
 /*
  * Meal photos in db.media. Unlike lib/media.saveImageFile (which keeps an undecodable original as a
@@ -113,4 +114,22 @@ export async function shrinkMealPhotos(photoIds: string[]): Promise<string[]> {
     if (rest.length) await db.media.bulkDelete(rest);
   });
   return [first.id];
+}
+
+/**
+ * Best effort, never throws: once a meal is final ('done'), keep just one small photo (shrinkMealPhotos) and
+ * point the meal at it. Call after EVERY transition of a photo meal to 'done' — analysis, "Enter manually",
+ * a draft folded into a search or barcode entry — so no path leaves full-size photos in every backup.
+ * Idempotent: an already-shrunk single photo is left alone.
+ */
+export async function finishMealPhotos(mealId: string): Promise<void> {
+  try {
+    const m = await db.meals.get(mealId);
+    if (!m || m.status !== 'done' || !m.photoIds.length) return;
+    const kept = await shrinkMealPhotos(m.photoIds);
+    const same = kept.length === m.photoIds.length && kept.every((id, i) => id === m.photoIds[i]);
+    if (!same) await updateMeal(mealId, { photoIds: kept }, { force: true });
+  } catch {
+    /* keep the photos as they are */
+  }
 }
