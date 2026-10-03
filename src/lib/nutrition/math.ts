@@ -151,3 +151,16 @@ export function macroG(v: number): string {
   const x = n0(v);
   return x < 10 ? String(Math.round(x * 10) / 10) : String(Math.round(x));
 }
+
+/**
+ * When to stamp a meal logged while viewing `day`: now for today; otherwise that day at the current time of
+ * day (so a forgotten lunch logged tonight for yesterday lands on yesterday). Pure: `now` injected.
+ */
+export function atForDay(day: string | null | undefined, now: number): number {
+  if (!day || day === dayKey(now)) return now;
+  const start = dayStart(day);
+  if (!Number.isFinite(start)) return now;
+  const d = new Date(now);
+  const sinceMidnight = (d.getHours() * 60 + d.getMinutes()) * 60_000 + d.getSeconds() * 1000;
+  return start + sinceMidnight;
+}

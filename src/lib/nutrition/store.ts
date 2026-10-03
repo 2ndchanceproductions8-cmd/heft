@@ -255,3 +255,21 @@ export async function foodByBarcode(code: string): Promise<Food | undefined> {
 
 /** Today's day key (re-evaluated by callers on render; pass `now` from useWakeNow for day rollover). */
 export const todayKey = (now = Date.now()) => dayKey(now);
+
+/** A meal item for a picked food (USDA hit, label product or cached food) at `grams` per serving. */
+export function itemFromChoice(c: FoodChoice, grams: number, name?: string): MealItem {
+  return {
+    id: newItemId(),
+    name: name ?? c.name,
+    portion: '',
+    grams,
+    baselineGrams: grams,
+    per100g: c.per100g,
+    fixed: null,
+    source: c.source,
+    matchedName: c.brand ? `${c.name} · ${c.brand}` : c.name,
+    fdcId: c.fdcId,
+    barcode: c.barcode,
+    lookup: 'ok',
+  };
+}
