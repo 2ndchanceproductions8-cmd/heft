@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cx } from './Button';
+import { clearBusy, markBusy } from '../../lib/busy';
 
 // Stack of open sheets: only the top-most one reacts to Escape, and body scroll stays locked while any is open.
 const stack: number[] = [];
@@ -8,11 +9,13 @@ let nextSheetId = 0;
 function pushSheet(id: number) {
   stack.push(id);
   document.body.style.overflow = 'hidden';
+  markBusy('sheet:' + id); // an open sheet may hold a half-typed form: no background update reload
 }
 function popSheet(id: number) {
   const i = stack.lastIndexOf(id);
   if (i >= 0) stack.splice(i, 1);
   if (!stack.length) document.body.style.overflow = '';
+  clearBusy('sheet:' + id);
 }
 
 const DRAG_START_PX = 6;

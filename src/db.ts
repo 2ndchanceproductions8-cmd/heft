@@ -10,7 +10,7 @@ import type {
   Settings,
   Workout,
 } from './types';
-import type { Food, Meal, NutritionProfile } from './lib/nutrition/types';
+import type { AiSpendRow, Food, Meal, NutritionProfile } from './lib/nutrition/types';
 
 export interface ActiveRecord {
   id: 'current';
@@ -31,6 +31,7 @@ export class HeftDB extends Dexie {
   meals!: EntityTable<Meal, 'id'>;
   foods!: EntityTable<Food, 'id'>;
   nutrition!: EntityTable<NutritionProfile, 'id'>;
+  aiSpend!: EntityTable<AiSpendRow, 'id'>;
 
   constructor(name = 'heft') {
     super(name);
@@ -50,6 +51,7 @@ export class HeftDB extends Dexie {
       meals: 'id, day, at, status',
       foods: 'id, barcode, lastUsedAt',
       nutrition: 'id',
+      aiSpend: 'id, at, mealId',
     });
   }
 }

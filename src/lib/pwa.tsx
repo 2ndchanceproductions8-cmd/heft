@@ -1,5 +1,6 @@
 import { registerSW } from 'virtual:pwa-register';
 import { toast } from '../components/ui/dialogs';
+import { isBusy } from './busy';
 
 /*
  * Service-worker updates without pulling chunks out from under a running page.
@@ -75,9 +76,10 @@ export function setupPwa() {
   });
 
   // Apply a waiting update while the app is in the background on a tab page: nothing is being typed there,
-  // and the reload is done by the time the user comes back.
+  // and the reload is done by the time the user comes back. Not while a sheet is open (Quick add, food search)
+  // or a Claude analysis is in flight (lib/busy.ts): the reload would lose the form / kill a billed call.
   document.addEventListener('visibilitychange', () => {
-    if (updateReady && document.visibilityState === 'hidden' && !FULL_SCREEN_ROUTE.test(window.location.hash)) {
+    if (updateReady && document.visibilityState === 'hidden' && !FULL_SCREEN_ROUTE.test(window.location.hash) && !isBusy()) {
       updateReady = false;
       void updateSW(true);
     }

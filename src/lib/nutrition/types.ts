@@ -18,7 +18,7 @@ export type NutrientSource = 'usda' | 'off' | 'estimate' | 'manual';
 export type MealStatus = 'draft' | 'pending' | 'analyzing' | 'done' | 'failed';
 
 /** Per-item database lookup outcome (shown per row, never as a whole-meal warning). */
-export type LookupStatus = 'ok' | 'no_match' | 'rate_limited' | 'failed' | 'skipped';
+export type LookupStatus = 'ok' | 'no_match' | 'rate_limited' | 'failed' | 'skipped' | 'key_rejected';
 
 export type Activity = 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
 export type Goal = 'lose' | 'maintain' | 'gain';
@@ -117,6 +117,15 @@ export interface Meal {
   aiCalls: AiCall[];
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * Append-only spend ledger: one row per billed Claude call, written by store.updateMeal/createMeal whenever a
+ * meal's aiCalls grows. Survives meal deletion and back-dating (the meter sums by CALL time).
+ */
+export interface AiSpendRow extends AiCall {
+  id: string;
+  mealId: string;
 }
 
 /** Personal food library: recents for search + offline barcode cache. */

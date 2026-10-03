@@ -1,3 +1,4 @@
+import { clearBusy, markBusy } from '../busy';
 import { useSyncExternalStore } from 'react';
 import { db } from '../../db';
 import { finalConfidence } from './confidence';
@@ -213,10 +214,12 @@ export function runAnalysis(mealId: string, deps: AnalysisDeps = {}): Promise<vo
   const cur = inflight.get(mealId);
   if (cur) return cur;
   running.add(mealId);
+  markBusy('analysis:' + mealId); // lib/pwa.tsx won't reload the app under a billed call
   const p = run(mealId, deps)
     .catch(() => undefined)
     .finally(() => {
       running.delete(mealId);
+      clearBusy('analysis:' + mealId);
       inflight.delete(mealId);
       emit();
     });

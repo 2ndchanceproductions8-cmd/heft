@@ -46,8 +46,17 @@ export const setFdcKey = (v: string | null) => write(FDC, v);
 
 /** USDA's shared demo key (about 10–30 requests an hour per IP). Used only when the user hasn't added one. */
 export const FDC_DEMO_KEY = 'DEMO_KEY';
-/** The key to send to USDA: the user's own, else DEMO_KEY. */
-export const fdcKeyOrDemo = () => getFdcKey() ?? FDC_DEMO_KEY;
+/** True for anything shaped like an Anthropic secret (never send one anywhere but api.anthropic.com). */
+export const isAnthropicSecret = (v: string | null | undefined) => !!v && v.trim().startsWith('sk-ant-');
+
+/**
+ * The key to send to USDA: the user's own, else DEMO_KEY. A Claude key saved into the USDA slot by mistake is
+ * NEVER sent (it would land in USDA's URL logs) — DEMO_KEY is used instead.
+ */
+export const fdcKeyOrDemo = () => {
+  const k = getFdcKey();
+  return k && !isAnthropicSecret(k) ? k : FDC_DEMO_KEY;
+};
 
 /** Forget both keys (called by Settings → "Delete all data"). */
 export function clearNutritionKeys(): void {

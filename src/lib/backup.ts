@@ -328,7 +328,7 @@ export async function importBackup(text: string): Promise<BackupCounts> {
     const keptMealMedia = keepFood
       ? await db.media.bulkGet([...new Set((await db.meals.toArray()).flatMap((m) => m.photoIds))])
       : [];
-    const foodTables = new Set<string>([db.meals.name, db.foods.name, db.nutrition.name]);
+    const foodTables = new Set<string>([db.meals.name, db.foods.name, db.nutrition.name, db.aiSpend.name]);
     await Promise.all(db.tables.filter((t) => !(keepFood && foodTables.has(t.name))).map((t) => t.clear()));
     await db.workouts.bulkPut(data.workouts);
     await db.routines.bulkPut(data.routines);
@@ -342,6 +342,8 @@ export async function importBackup(text: string): Promise<BackupCounts> {
     if (data.active) await db.active.put({ id: 'current', workout: data.active });
     if (!keepFood) {
       await db.meals.bulkPut(data.meals);
+      // The spend ledger isn't in the file; rebuild it from the restored meals' billed calls.
+      await db.aiSpend.bulkPut(data.meals.flatMap((m) => m.aiCalls.map((c, i) => ({ ...c, id: `sp_${m.id}_${i}`, mealId: m.id }))));
       await db.foods.bulkPut(data.foods);
       if (data.nutrition) await db.nutrition.put(data.nutrition);
     }

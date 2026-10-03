@@ -98,10 +98,19 @@ export function shiftDay(day: string, deltaDays: number): string {
   return dayKey(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + deltaDays).getTime());
 }
 
-/** Re-derive everything cached on a meal (day, serves clamp, totals). Pure: returns a new object. */
-export function recomputeMeal(meal: Meal): Meal {
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Re-derive everything cached on a meal (serves clamp, totals, and `day` when needed). Pure.
+ *
+ * `day` is derived from `at` only when it is missing/invalid or `rederiveDay` is set (the eaten time changed).
+ * Otherwise the stored day is kept: deriving it again in the CURRENT time zone would silently move a meal to
+ * another day after travel the next time any unrelated field (grams, serves) is edited.
+ */
+export function recomputeMeal(meal: Meal, opts: { rederiveDay?: boolean } = {}): Meal {
   const serves = clampServes(meal.serves);
-  return { ...meal, serves, day: dayKey(meal.at), totals: mealTotals(meal.items, serves) };
+  const day = opts.rederiveDay || !DAY_RE.test(meal.day ?? '') ? dayKey(meal.at) : meal.day;
+  return { ...meal, serves, day, totals: mealTotals(meal.items, serves) };
 }
 
 /** Only finished meals count toward the day (drafts, pending, analyzing and failed meals don't). */
@@ -158,9 +167,9 @@ export function macroG(v: number): string {
  */
 export function atForDay(day: string | null | undefined, now: number): number {
   if (!day || day === dayKey(now)) return now;
-  const start = dayStart(day);
-  if (!Number.isFinite(start)) return now;
-  const d = new Date(now);
-  const sinceMidnight = (d.getHours() * 60 + d.getMinutes()) * 60_000 + d.getSeconds() * 1000;
-  return start + sinceMidnight;
+  const m = DAY_RE.test(day) ? day.split('-').map(Number) : null;
+  if (!m) return now;
+  // Build from calendar fields (not midnight + elapsed ms) so DST days keep the wall-clock time and the day.
+  const t = new Date(now);
+  return new Date(m[0], m[1] - 1, m[2], t.getHours(), t.getMinutes(), t.getSeconds()).getTime();
 }

@@ -7,6 +7,7 @@ import {
   createMeal,
   deleteMeal,
   foodByBarcode,
+  loadAiSpend,
   loadTargets,
   MealBusyError,
   updateItem,
@@ -169,5 +170,31 @@ describe('Dexie v1 → v2 migration', () => {
     expect(await v2.nutrition.count()).toBe(0);
     v2.close();
     await Dexie.delete(name);
+  });
+});
+
+describe('spend ledger', () => {
+  const call = (at: number, costUsd: number) => ({ at, model: 'claude-opus-5-5', inputTokens: 3000, outputTokens: 900, costUsd, ok: true });
+  it('counts by call time, survives meal deletion and back-dated meals', async () => {
+    const OCT1 = new Date(2026, 9, 1).getTime();
+    const backdated = await createMeal({ input: { kind: 'photo' }, at: new Date(2026, 8, 20, 12).getTime() }, AT);
+    await updateMeal(backdated.id, (m) => ({ aiCalls: [...m.aiCalls, call(AT, 0.05)] }));
+    const other = await createMeal({ input: { kind: 'photo' }, at: AT, aiCalls: [call(AT, 0.07)] }, AT);
+    const spend = await loadAiSpend(OCT1);
+    expect(spend.calls).toBe(2);
+    expect(spend.costUsd).toBeCloseTo(0.12, 10);
+    await deleteMeal(other.id);
+    expect((await loadAiSpend(OCT1)).calls).toBe(2);
+    // An edit that doesn't add calls writes no ledger rows.
+    await updateMeal(backdated.id, { title: 'x' });
+    expect((await loadAiSpend(OCT1)).calls).toBe(2);
+  });
+
+  it('only a change of `at` moves the meal to another day', async () => {
+    const m = await createMeal({ input: { kind: 'photo' }, at: AT, status: 'done', items: [item('a', 100)] }, AT);
+    await db.meals.update(m.id, { day: '2026-10-02' }); // as if logged in another time zone
+    expect((await updateItem(m.id, 'a', { grams: 150 }))!.day).toBe('2026-10-02');
+    const moved = await updateMeal(m.id, { at: new Date(2026, 9, 1, 9).getTime() });
+    expect(moved!.day).toBe('2026-10-01');
   });
 });

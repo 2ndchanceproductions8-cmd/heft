@@ -7,6 +7,7 @@ import {
   macroG,
   mealTotals,
   per100gFromEstimate,
+  atForDay,
   recomputeMeal,
   remaining,
   shiftDay,
@@ -138,5 +139,35 @@ describe('days', () => {
   it('macroG shows a decimal only under 10 g', () => {
     expect(macroG(6.34)).toBe('6.3');
     expect(macroG(30.9)).toBe('31');
+  });
+});
+
+describe('atForDay', () => {
+  it('today → now; another day → that day at the same wall-clock time', () => {
+    const now = new Date(2026, 9, 3, 19, 45, 10).getTime();
+    expect(atForDay('2026-10-03', now)).toBe(now);
+    expect(atForDay(null, now)).toBe(now);
+    const t = new Date(atForDay('2026-09-29', now));
+    expect([t.getFullYear(), t.getMonth(), t.getDate(), t.getHours(), t.getMinutes()]).toEqual([2026, 8, 29, 19, 45]);
+  });
+
+  it('DST days keep the day and the wall-clock hour (US spring-forward / fall-back)', () => {
+    const late = new Date(2026, 2, 10, 23, 30).getTime();
+    expect(dayKey(atForDay('2026-03-08', late))).toBe('2026-03-08');
+    expect(new Date(atForDay('2026-03-08', late)).getHours()).toBe(23);
+    const ten = new Date(2026, 10, 5, 10, 0).getTime();
+    expect(new Date(atForDay('2026-11-01', ten)).getHours()).toBe(10);
+  });
+
+  it('junk day → now', () => {
+    expect(atForDay('yesterday', 5)).toBe(5);
+  });
+});
+
+describe('recomputeMeal day handling', () => {
+  it('keeps a valid stored day unless asked to re-derive (no silent day moves after travel)', () => {
+    const m = meal({ day: '2026-10-02', items: [item({ grams: 100 })] });
+    expect(recomputeMeal(m).day).toBe('2026-10-02');
+    expect(recomputeMeal(m, { rederiveDay: true }).day).toBe('2026-10-03');
   });
 });

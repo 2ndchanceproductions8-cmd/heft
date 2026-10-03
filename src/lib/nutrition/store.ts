@@ -6,7 +6,7 @@ import { getSettings, newestWeighIn, pickBodyweightKg } from '../settings';
 import type { Settings } from '../../types';
 import { dayKey, emptyTotals, recomputeMeal, sumMeals } from './math';
 import { bodyFromSettings, computeTargets, DEFAULT_NUTRITION, type BodyField } from './targets';
-import type { Food, FoodChoice, Meal, MealItem, MealStatus, NutritionProfile, Targets, Totals } from './types';
+import type { AiCall, AiSpendRow, Food, FoodChoice, Meal, MealItem, MealStatus, NutritionProfile, Targets, Totals } from './types';
 
 /*
  * Persistence for the Food tab. Every meal write goes through here so cached fields (day, totals) can never
@@ -21,6 +21,11 @@ export function newItemId(): string {
 
 export interface NewMeal extends Partial<Omit<Meal, 'id' | 'day' | 'totals' | 'createdAt' | 'updatedAt'>> {
   input: Meal['input'];
+}
+
+/** Ledger rows for billed calls (see AiSpendRow). */
+function spendRows(mealId: string, calls: AiCall[]): AiSpendRow[] {
+  return calls.map((c) => ({ ...c, id: 'sp_' + uid(), mealId }));
 }
 
 /** Create a meal row and return it. Defaults: eaten now, 1 serving, no items, status 'draft'. */
@@ -46,7 +51,10 @@ export async function createMeal(init: NewMeal, now = Date.now()): Promise<Meal>
     createdAt: now,
     updatedAt: now,
   });
-  await db.meals.add(meal);
+  await db.transaction('rw', db.meals, db.aiSpend, async () => {
+    await db.meals.add(meal);
+    if (meal.aiCalls.length) await db.aiSpend.bulkAdd(spendRows(meal.id, meal.aiCalls));
+  });
   return meal;
 }
 
@@ -58,31 +66,37 @@ export class MealBusyError extends Error {
 }
 
 /**
- * Patch a meal (object patch or updater function). Recomputes totals/day and stamps updatedAt; a status
- * change also stamps statusAt. While a meal is 'analyzing' only the analysis itself may write to it
- * (`force: true`) — a debounced UI edit landing mid-analysis would otherwise put stale items back.
- * Returns the saved meal, or null when it no longer exists.
+ * Patch a meal (object patch or updater function). Recomputes totals and stamps updatedAt; a status change
+ * also stamps statusAt; `day` is re-derived only when the eaten time `at` changes. While a meal is
+ * 'analyzing' only the analysis itself may write to it (`force: true`) — a debounced UI edit landing
+ * mid-analysis would otherwise put stale items back. Calls appended to `aiCalls` are also written to the
+ * spend ledger (db.aiSpend) in the same transaction. Returns the saved meal, or null when it no longer exists.
  */
 export async function updateMeal(
   id: string,
   patch: Partial<Omit<Meal, 'id' | 'createdAt'>> | ((m: Meal) => Partial<Omit<Meal, 'id' | 'createdAt'>>),
   opts: { force?: boolean; now?: number } = {},
 ): Promise<Meal | null> {
-  return db.transaction('rw', db.meals, async () => {
+  return db.transaction('rw', db.meals, db.aiSpend, async () => {
     const cur = await db.meals.get(id);
     if (!cur) return null;
     if (cur.status === 'analyzing' && !opts.force) throw new MealBusyError();
     const p = typeof patch === 'function' ? patch(cur) : patch;
     const now = opts.now ?? Date.now();
-    const next = recomputeMeal({
-      ...cur,
-      ...p,
-      id: cur.id,
-      createdAt: cur.createdAt,
-      updatedAt: now,
-      statusAt: p.status && p.status !== cur.status ? now : (p.statusAt ?? cur.statusAt),
-    });
+    const next = recomputeMeal(
+      {
+        ...cur,
+        ...p,
+        id: cur.id,
+        createdAt: cur.createdAt,
+        updatedAt: now,
+        statusAt: p.status && p.status !== cur.status ? now : (p.statusAt ?? cur.statusAt),
+      },
+      { rederiveDay: p.at !== undefined && p.at !== cur.at },
+    );
     await db.meals.put(next);
+    const prev = cur.aiCalls ?? [];
+    if (next.aiCalls.length > prev.length) await db.aiSpend.bulkAdd(spendRows(id, next.aiCalls.slice(prev.length)));
     return next;
   });
 }
@@ -136,21 +150,19 @@ export function useUnfinishedMeals(): Meal[] | undefined {
   );
 }
 
-/** Sum of recorded Claude spend since `since` (epoch ms), across all meals (deleted meals drop out). */
+/** Claude spend billed since `since` (epoch ms), from the ledger: counts deleted and back-dated meals too. */
+export async function loadAiSpend(since: number): Promise<{ costUsd: number; calls: number }> {
+  let costUsd = 0;
+  let calls = 0;
+  await db.aiSpend.where('at').aboveOrEqual(since).each((c) => {
+    costUsd += c.costUsd;
+    calls++;
+  });
+  return { costUsd, calls };
+}
+
 export function useAiSpend(since: number): { costUsd: number; calls: number } | undefined {
-  return useLiveQuery(async () => {
-    let costUsd = 0;
-    let calls = 0;
-    await db.meals.where('at').aboveOrEqual(since - 7 * 864e5).each((m) => {
-      for (const c of m.aiCalls ?? []) {
-        if (c.at >= since) {
-          costUsd += c.costUsd;
-          calls++;
-        }
-      }
-    });
-    return { costUsd, calls };
-  }, [since]);
+  return useLiveQuery(() => loadAiSpend(since), [since]);
 }
 
 // ------------------------------------------------------------------ nutrition profile + targets
