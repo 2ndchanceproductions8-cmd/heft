@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { format, isSameDay } from 'date-fns';
 import {
   AlarmClock,
@@ -28,6 +28,7 @@ import {
   Footprints,
   Gauge,
   Image as ImageIcon,
+  Heart,
 } from 'lucide-react';
 import type { Settings } from '../../types';
 import { db, requestPersistentStorage } from '../../db';
@@ -108,6 +109,7 @@ const icon = (node: ReactNode) => <span className="[&>svg]:h-[20px] [&>svg]:w-[2
 export function SettingsPage() {
   const s = useSettings();
   const location = useLocation();
+  const navigate = useNavigate();
   // Body weight actually used for calories (newest weigh-in, else profile). undefined while loading.
   const effective = useLiveQuery(() => currentBodyweightKg(), []);
   const effectiveKg = effective ?? null;
@@ -372,6 +374,18 @@ export function SettingsPage() {
               ]}
             />
           }
+        />
+      </ListGroup>
+
+      <SectionHeader>Apple Health</SectionHeader>
+      <ListGroup>
+        <ListRow
+          icon={icon(<Heart />)}
+          title="Apple Health"
+          subtitle="Via the Shortcuts app"
+          right={<Value>{s.appleHealth ? 'On' : 'Set up'}</Value>}
+          chevron
+          onClick={() => navigate('/settings/apple-health')}
         />
       </ListGroup>
 

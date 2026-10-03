@@ -221,6 +221,8 @@ export interface Workout {
   setCount: number;
   /** Personal records set in this workout (recomputed chronologically whenever history changes). */
   prs: PRRecord[];
+  /** When this workout was last handed to Apple Health (via the "Heft to Health" Shortcut). */
+  healthSentAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -332,4 +334,6 @@ export interface Settings {
   showRpe: boolean;
   /** Empty barbell weight in kg for the plate calculator. */
   barKg: number;
+  /** The "Heft to Health" Shortcut is set up: show "Send to Apple Health" on workouts. */
+  appleHealth: boolean;
 }

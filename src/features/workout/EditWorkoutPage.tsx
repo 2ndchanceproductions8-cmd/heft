@@ -241,6 +241,8 @@ function EditForm({ original }: { original: Workout }) {
         bodyweightKg: bodyweightKg ?? null,
         calories,
         caloriesManual: !!draft.caloriesManual,
+        // A send to Apple Health made while this edit was open must not be lost.
+        healthSentAt: original.healthSentAt ?? draft.healthSentAt ?? null,
       };
       await saveWorkout(updated);
       if (session.removedPhotos.length) await deleteMedia(session.removedPhotos).catch(() => undefined);

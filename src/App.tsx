@@ -13,6 +13,7 @@ import { WorkoutDetailPage } from './features/history/WorkoutDetailPage';
 import { ExerciseLibraryPage } from './features/exercises/ExerciseLibraryPage';
 import { ExerciseFormPage } from './features/exercises/ExerciseFormPage';
 import { SettingsPage } from './features/progress/SettingsPage';
+import { AppleHealthPage } from './features/progress/AppleHealthPage';
 import { Loading } from './components/ui';
 
 // Chart pages pull in Recharts (~400 KB) — load them on demand (the service worker precaches the chunks).
@@ -55,6 +56,7 @@ const router = createHashRouter([
               { path: '/progress', element: <ProgressPage /> },
               { path: '/progress/measurements', element: <MeasurementsPage /> },
               { path: '/settings', element: <SettingsPage /> },
+              { path: '/settings/apple-health', element: <AppleHealthPage /> },
             ],
           },
         ],

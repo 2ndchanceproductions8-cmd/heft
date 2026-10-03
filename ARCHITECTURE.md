@@ -113,3 +113,14 @@ Tab pages must use `<Page tabBar>` so content clears the fixed bottom bars.
 - Typecheck with `npx tsc --noEmit` and fix every error in YOUR files (ignore errors in files owned by
   others that are mid-edit). Your work is not done while your files have type errors.
 - No placeholder/TODO features: everything you render must work.
+
+## Apple Health (Shortcut bridge)
+A web app cannot use HealthKit, so `lib/appleHealth.ts` hands a finished workout to an Apple Shortcut the user
+builds once ("Heft to Health"; guide at `/settings/apple-health`, `features/progress/AppleHealthPage.tsx`) via
+`shortcuts://run-shortcut?name=Heft%20to%20Health&input=text&text=<JSON>`. Payload keys: `start` ("October 2,
+2026 at 6:05 PM"), `startISO`, `minutes`, `kcal` (ACTIVE calories = Heft's total estimate minus 1 MET × kg × h;
+typed-in calories pass unchanged), `name`. The Shortcut: Get Dictionary from Input → Log Workout (Traditional
+Strength Training; Date=start, Duration=minutes, Calories=kcal, Distance=0, because blank Distance fails) → Log Health
+Sample (Active Energy=kcal, Date=start) for the Move ring. `Settings.appleHealth` turns on the
+`features/history/SendToHealthButton.tsx` button (iPhone/iPad only); `Workout.healthSentAt` records sends. One-way only.
+A future native build (HealthKit) should reuse `healthPayload()`.

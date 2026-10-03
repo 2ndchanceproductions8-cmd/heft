@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: Settings = {
   previousValues: 'any',
   showRpe: false,
   barKg: 20.411656, // 45 lb
+  appleHealth: false,
 };
 
 /** Current settings (defaults until the DB answers — never undefined). */

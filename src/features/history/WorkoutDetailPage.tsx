@@ -27,6 +27,7 @@ import { beginWorkout } from '../../lib/startWorkout';
 import { formatDuration, formatVolume } from '../../lib/units';
 import { createRoutineFromWorkout, deleteWorkout, useWorkout } from '../../lib/workouts';
 import { CelebrationCard } from './CelebrationCard';
+import { SendToHealthButton } from './SendToHealthButton';
 import { ExerciseLog } from './ExerciseLog';
 import { HistoryErrorBoundary } from './HistoryErrorBoundary';
 import { PhotoViewer } from './PhotoViewer';
@@ -275,6 +276,9 @@ export function WorkoutDetail({
         />
         <Stat label="Exercises" value={w.exercises.length} />
       </div>
+
+      {/* Right after finishing, the celebration card carries this button. */}
+      {celebrate ? null : <SendToHealthButton workout={w} className="mx-4 mt-3 w-[calc(100%-2rem)]" />}
 
       {w.notes?.trim() ? (
         <p className="mx-4 mt-3 rounded-2xl bg-surface p-4 text-[15px] leading-relaxed break-words whitespace-pre-wrap">

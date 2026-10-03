@@ -5,6 +5,7 @@ import { useExercises } from '../../lib/ExerciseProvider';
 import { PR_LABEL } from '../../lib/calc';
 import { formatDuration, formatVolume } from '../../lib/units';
 import { formatPRValue, ordinal } from './historyUtils';
+import { SendToHealthButton } from './SendToHealthButton';
 
 /** Shown at the top of the detail page right after finishing (?celebrate=1). */
 export function CelebrationCard({
@@ -89,7 +90,9 @@ export function CelebrationCard({
           </div>
         ) : null}
 
-        <Button block size="lg" className="relative mt-5" onClick={onDone}>
+        <SendToHealthButton workout={workout} className="relative mt-5 w-full bg-surface-2 active:bg-surface-3" />
+
+        <Button block size="lg" className="relative mt-3" onClick={onDone}>
           Done
         </Button>
       </div>
