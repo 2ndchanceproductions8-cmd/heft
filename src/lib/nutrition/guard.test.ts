@@ -45,3 +45,12 @@ describe('no secrets in the bundle', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe('Claude key never goes to USDA', () => {
+  it('isAnthropicSecret catches quoted / prefixed / zero-width-padded keys', async () => {
+    const { isAnthropicSecret } = await import('./keys');
+    const k = 'sk-ant-api03-' + 'x'.repeat(30);
+    for (const v of [k, `"${k}"`, `Bearer ${k}`, `ANTHROPIC_API_KEY=${k}`, '​' + k, k.toUpperCase()]) expect(isAnthropicSecret(v)).toBe(true);
+    expect(isAnthropicSecret('abcdEFGH1234abcdEFGH1234abcdEFGH1234abcd')).toBe(false);
+  });
+});

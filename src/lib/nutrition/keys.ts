@@ -46,8 +46,11 @@ export const setFdcKey = (v: string | null) => write(FDC, v);
 
 /** USDA's shared demo key (about 10–30 requests an hour per IP). Used only when the user hasn't added one. */
 export const FDC_DEMO_KEY = 'DEMO_KEY';
-/** True for anything shaped like an Anthropic secret (never send one anywhere but api.anthropic.com). */
-export const isAnthropicSecret = (v: string | null | undefined) => !!v && v.trim().startsWith('sk-ant-');
+/**
+ * True when a value CONTAINS an Anthropic secret anywhere — quoted, after "Bearer ", "ANTHROPIC_API_KEY=", or
+ * behind invisible characters (never send one anywhere but api.anthropic.com).
+ */
+export const isAnthropicSecret = (v: string | null | undefined) => !!v && /sk-ant-/i.test(v);
 
 /**
  * The key to send to USDA: the user's own, else DEMO_KEY. A Claude key saved into the USDA slot by mistake is

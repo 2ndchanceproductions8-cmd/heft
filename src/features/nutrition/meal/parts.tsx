@@ -9,10 +9,11 @@ import { cx } from '../../../components/ui';
 export function HeaderButton({
   children,
   bold,
+  tone = 'accent',
   className,
   onPointerDown,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { bold?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { bold?: boolean; tone?: 'accent' | 'danger' }) {
   return (
     <button
       type="button"
@@ -22,7 +23,8 @@ export function HeaderButton({
         onPointerDown?.(e);
       }}
       className={cx(
-        'flex h-10 items-center rounded-lg px-2 text-[16px] text-accent transition-opacity active:opacity-50 disabled:opacity-40',
+        'flex h-10 items-center rounded-lg px-2 text-[16px] transition-opacity active:opacity-50 disabled:opacity-40',
+        tone === 'danger' ? 'text-danger' : 'text-accent',
         bold && 'font-semibold',
         className,
       )}
@@ -32,11 +34,21 @@ export function HeaderButton({
   );
 }
 
-/** Back chevron matching TopBar's, with a custom handler (flush edits, pick the destination). */
-export function BackButton({ onClick, label = 'Back' }: { onClick: () => void; label?: string }) {
+/**
+ * Back chevron matching TopBar's, with a custom handler (flush edits, pick the destination). `text` adds a
+ * visible label after the chevron (e.g. "Save for later"), which then also names the button.
+ */
+export function BackButton({ onClick, label = 'Back', text, disabled }: { onClick: () => void; label?: string; text?: string; disabled?: boolean }) {
   return (
-    <button type="button" aria-label={label} onClick={onClick} className="flex h-10 items-center pr-2 pl-1 text-accent active:opacity-60">
-      <ChevronLeft className="h-7 w-7" strokeWidth={2.2} />
+    <button
+      type="button"
+      aria-label={text ? undefined : label}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex h-10 items-center pr-2 pl-1 text-accent active:opacity-60 disabled:opacity-40"
+    >
+      <ChevronLeft className="h-7 w-7 shrink-0" strokeWidth={2.2} />
+      {text ? <span className="-ml-0.5 text-[16px] whitespace-nowrap">{text}</span> : null}
     </button>
   );
 }

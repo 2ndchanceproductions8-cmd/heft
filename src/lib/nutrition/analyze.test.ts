@@ -58,7 +58,10 @@ function deps(over: Partial<AnalysisDeps> = {}): AnalysisDeps {
     loadImages: async (ids) => ids.map(() => ({ data: 'AAAA', mediaType: 'image/jpeg' as const })),
     analyzeMeal: vi.fn<typeof analyzeMeal>(async () => RESULT),
     groundItems: fakeGround,
-    shrinkPhotos: async (ids) => ids.slice(0, 1),
+    // stands in for photos.ts finishMealPhotos (keep the first photo); photos.test.ts runs the real one end to end
+    finishPhotos: vi.fn(async (id: string) => {
+      await updateMeal(id, (m) => ({ photoIds: m.photoIds.slice(0, 1) }), { force: true });
+    }),
     now: () => 1_000,
     ...over,
   };
@@ -92,11 +95,29 @@ describe('runAnalysis', () => {
     expect(m.title).toBe('White rice & Chicken');
     expect(m.aiCalls).toEqual([{ at: 1_000, model: 'claude-opus-5-5', inputTokens: 1500, outputTokens: 400, costUsd: 0.014, ok: true }]);
     expect(m.photoIds).toEqual(['m_a']);
+    expect(d.finishPhotos).toHaveBeenCalledTimes(1);
+    expect(d.finishPhotos).toHaveBeenCalledWith(meal.id);
     expect(d.analyzeMeal).toHaveBeenCalledWith(
       { images: [expect.objectContaining({ mediaType: 'image/jpeg' }), expect.anything()], description: undefined, weightG: null },
       { apiKey: 'test-key' },
     );
     expect(isAnalysisRunning(meal.id)).toBe(false);
+  });
+
+  it('photos are finished through finishMealPhotos once the meal is saved done; a meal without photos skips it', async () => {
+    const meal = await pendingMeal();
+    const seen: string[] = [];
+    const finishPhotos = vi.fn(async (id: string) => {
+      seen.push((await db.meals.get(id))!.status);
+    });
+    await runAnalysis(meal.id, deps({ finishPhotos }));
+    expect(seen).toEqual(['done']);
+
+    const text = await createMeal({ input: { kind: 'text', description: 'two eggs' }, status: 'pending' });
+    const none = vi.fn(async () => undefined);
+    await runAnalysis(text.id, deps({ finishPhotos: none }));
+    expect((await db.meals.get(text.id))!.status).toBe('done');
+    expect(none).not.toHaveBeenCalled();
   });
 
   it('keeps an existing title, passes the description + weight; a user weight allows high without a scale reference', async () => {
@@ -120,8 +141,8 @@ describe('runAnalysis', () => {
     const meal = await pendingMeal();
     await updateMeal(meal.id, { aiCalls: [{ at: 1, model: 'claude-opus-5-5', inputTokens: 1, outputTokens: 1, costUsd: 0.001, ok: true }] });
     const refusedCall = { model: 'claude-opus-5-5', inputTokens: 1200, outputTokens: 0, costUsd: 0.0048, ok: false, error: 'refused' };
-    const shrink = vi.fn(async (ids: string[]) => ids);
-    await runAnalysis(meal.id, deps({ analyzeMeal: async () => Promise.reject(new AiError('refused', 'declined', [refusedCall])), shrinkPhotos: shrink }));
+    const shrink = vi.fn(async () => undefined);
+    await runAnalysis(meal.id, deps({ analyzeMeal: async () => Promise.reject(new AiError('refused', 'declined', [refusedCall])), finishPhotos: shrink }));
     const m = (await db.meals.get(meal.id))!;
     expect(m.status).toBe('failed');
     expect(m.error).toBe('Claude declined this photo.');
@@ -210,7 +231,7 @@ describe('runAnalysis', () => {
 
   it('a failing photo shrink never fails the meal', async () => {
     const meal = await pendingMeal();
-    await runAnalysis(meal.id, deps({ shrinkPhotos: async () => Promise.reject(new Error('decode')) }));
+    await runAnalysis(meal.id, deps({ finishPhotos: async () => Promise.reject(new Error('decode')) }));
     const m = (await db.meals.get(meal.id))!;
     expect(m.status).toBe('done');
     expect(m.photoIds).toEqual(['m_a', 'm_b']);

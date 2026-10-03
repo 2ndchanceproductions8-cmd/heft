@@ -46,6 +46,25 @@ describe('buildPrompt', () => {
     expect(p).toContain("The user's description and weight are final.");
   });
 
+  it('never asks Claude to reproduce its reasoning (reasoning_extraction refusals are not retried on a fallback)', () => {
+    const variants = [
+      buildPrompt({ imageCount: 1 }),
+      buildPrompt({ imageCount: 3, description: 'curry', weightG: 400 }),
+      buildPrompt({ imageCount: 0, description: '2 eggs', weightG: 120 }),
+      buildPrompt({ imageCount: 0 }),
+    ];
+    for (const p of variants) {
+      expect(p).not.toContain('Show your reasoning');
+      expect(p).not.toMatch(/(show|explain|describe|walk through|write out|share|include)[^.]{0,40}(reasoning|thinking|thought process|chain of thought|step[- ]by[- ]step)/i);
+      expect(p).not.toMatch(/think (step by step|out loud|aloud)|reason(ing)? (out loud|aloud)/i);
+      expect(p).not.toMatch(/explain/i);
+    }
+    // the useful part survives as an output field
+    expect(variants[0]).toContain('When a portion is unusually hard to call, note the key assumption (estimated depth, which reference you used) in notes.');
+    expect(variants[0]).toContain('say in notes, briefly, what the image shows instead');
+    expect(variants[3]).toContain('say in notes, briefly, what the description refers to instead');
+  });
+
   it('text only: no photo procedure, description-based not-food rule', () => {
     const p = buildPrompt({ imageCount: 0, description: '2 eggs' });
     expect(p).not.toContain('STEP 1');

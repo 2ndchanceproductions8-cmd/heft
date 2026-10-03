@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, ChevronLeft, ChevronRight, Plus, ScanBarcode, Search, Settings as SettingsIcon, Utensils, Zap } from 'lucide-react';
 import { ActionSheet, Button, EmptyState, IconButton, ListGroup, Loading, Page, SectionHeader, TopBar, toast } from '../../components/ui';
-import { atForDay, shiftDay, sumMeals } from '../../lib/nutrition/math';
-import { createMeal, itemFromChoice, useDayMeals, useTargets, type TargetsState } from '../../lib/nutrition/store';
+import { atForDay, dayKey, shiftDay, sumMeals } from '../../lib/nutrition/math';
+import { createMeal, itemFromChoice, useDayMeals, useTargets, useUnfinishedMeals, type TargetsState } from '../../lib/nutrition/store';
 import { useDayBurn, type DayBurn } from '../../lib/nutrition/burn';
 import type { FoodChoice, Meal } from '../../lib/nutrition/types';
 import { FoodSearchSheet } from './FoodSearchSheet';
@@ -13,10 +13,11 @@ import { MealRow } from './diary/MealRow';
 import { buildQuickAdd, QuickAddSheet, type QuickAddValues } from './diary/QuickAddSheet';
 import { TargetsSummary } from './diary/TargetsSummary';
 import { TrainingLine } from './diary/TrainingLine';
+import { otherDayUnfinished, UnfinishedMeals } from './diary/UnfinishedMeals';
 
 /*
  * Food tab root (/nutrition, ?d=yyyy-MM-dd for another day): the day's budget, workout burn (display only),
- * "Log food", and the day's meals in the order they were eaten.
+ * "Log food", unfinished meals from other days, and the day's meals in the order they were eaten.
  */
 export function DiaryPage() {
   return (
@@ -36,6 +37,7 @@ function DiaryScreen() {
   const meals = useDayMeals(day);
   const targets = useTargets();
   const burn = useDayBurn(day);
+  const unfinished = otherDayUnfinished(useUnfinishedMeals(), day);
 
   const [menu, setMenu] = useState(false);
   const [search, setSearch] = useState(false);
@@ -101,6 +103,8 @@ function DiaryScreen() {
         meals={meals}
         targets={targets}
         burn={burn}
+        unfinished={unfinished}
+        today={today}
         onLog={() => setMenu(true)}
         onSettings={() => navigate('/nutrition/settings')}
       />
@@ -155,18 +159,22 @@ function DiaryScreen() {
 
 /**
  * The Diary body with plain props (live data comes from DiaryScreen), so it renders in tests. `undefined`
- * means still loading.
+ * means still loading. `unfinished` = unfinished meals from OTHER days (see UnfinishedMeals).
  */
 export function DiaryContent({
   meals,
   targets,
   burn,
+  unfinished = [],
+  today = dayKey(Date.now()),
   onLog,
   onSettings,
 }: {
   meals: Meal[] | undefined;
   targets: Pick<TargetsState, 'targets' | 'missing'> | undefined;
   burn: DayBurn | undefined;
+  unfinished?: Meal[];
+  today?: string;
   onLog: () => void;
   onSettings: () => void;
 }) {
@@ -182,7 +190,7 @@ export function DiaryContent({
           loading={meals === undefined || targets === undefined}
           onSetup={onSettings}
         />
-        <TrainingLine burn={burn} onSettings={onSettings} />
+        <TrainingLine burn={burn} hasTarget={!!targets?.targets} onSettings={onSettings} />
       </div>
 
       <div className="px-4 pt-4">
@@ -190,6 +198,8 @@ export function DiaryContent({
           Log food
         </Button>
       </div>
+
+      <UnfinishedMeals meals={unfinished} today={today} />
 
       {meals === undefined ? (
         <Loading />

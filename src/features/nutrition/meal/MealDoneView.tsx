@@ -10,7 +10,7 @@ import type { FoodChoice, Meal, MealItem } from '../../../lib/nutrition/types';
 import { formatGrams } from '../../../lib/units';
 import { FoodSearchSheet } from '../FoodSearchSheet';
 import { formatKcal, Ring, useMassUnit } from '../ui';
-import { dayLabel, fromDateTimeLocal, mealDisplayTitle, toDateTimeLocal } from './format';
+import { dayLabel, eatenAtFromInput, mealDisplayTitle, toDateTimeLocal } from './format';
 import { gramsEdited, ItemRow } from './ItemRow';
 import { AnalysisNotes, MealPhotos, MealSummary, ServesStepper } from './MealStates';
 import { diaryPath, scanPath, SETTINGS_PATH } from './nav';
@@ -21,10 +21,13 @@ import { useMealEditor } from './useMealEditor';
 export const needsFdcKeyBanner = (items: Pick<MealItem, 'lookup'>[], fdcKey: string | null) =>
   !fdcKey && items.some((it) => it.lookup === 'rate_limited');
 
+/** True when USDA refused the saved key for an item (it fell back to Claude's estimate). */
+export const fdcKeyRejected = (items: Pick<MealItem, 'lookup'>[]) => items.some((it) => it.lookup === 'key_rejected');
+
 /** The finished-meal editor: photo, totals, notes, servings and every item (all editable). */
 export function MealDoneView({ meal }: { meal: Meal }) {
   const nav = useNavigate();
-  const { view, edit, flush, discard } = useMealEditor(meal);
+  const { view, edit, flush, discard, working } = useMealEditor(meal);
   const [mu] = useMassUnit();
   const keys = useNutritionKeys();
   const photoUrls = useMediaUrls(view.photoIds);
@@ -35,7 +38,8 @@ export function MealDoneView({ meal }: { meal: Meal }) {
 
   const back = async () => {
     await flush();
-    nav(diaryPath(view.day), { replace: true });
+    // The working copy, not the render-time `view`: a date edit within the debounce must land on the new day.
+    nav(diaryPath(working.current.day), { replace: true });
   };
 
   const rename = async () => {
@@ -152,9 +156,12 @@ export function MealDoneView({ meal }: { meal: Meal }) {
               id="meal-eaten-at"
               type="datetime-local"
               value={toDateTimeLocal(view.at)}
+              max={toDateTimeLocal(Date.now())}
               onChange={(e) => {
-                const at = fromDateTimeLocal(e.target.value);
-                if (at != null) edit(() => ({ at }));
+                // iOS doesn't enforce max on its date wheel: a future time would hide the meal from the Diary.
+                const at = eatenAtFromInput(e.target.value, Date.now());
+                if (at === 'future') toast("A meal can't be eaten in the future", 'error');
+                else if (at != null) edit(() => ({ at }));
               }}
               className="h-10 min-w-0 rounded-lg bg-surface-2 px-3 text-[16px] text-fg tabular-nums outline-none focus:ring-2 focus:ring-accent/60"
             />
@@ -171,7 +178,19 @@ export function MealDoneView({ meal }: { meal: Meal }) {
           />
         ) : null}
         <ServesStepper value={view.serves} onChange={(s) => edit(() => ({ serves: clampServes(s) }))} />
-        {needsFdcKeyBanner(view.items, keys.fdc) ? (
+        {fdcKeyRejected(view.items) ? (
+          <Notice
+            tone="danger"
+            icon={<TriangleAlert className="h-5 w-5" />}
+            actions={
+              <Button variant="secondary" block onClick={() => void flush().then(() => nav(SETTINGS_PATH))}>
+                Open Food settings
+              </Button>
+            }
+          >
+            USDA rejected your key — check it in Food settings. Until then, foods marked Est. use Claude's estimate.
+          </Notice>
+        ) : needsFdcKeyBanner(view.items, keys.fdc) ? (
           <Notice
             tone="warn"
             icon={<TriangleAlert className="h-5 w-5" />}

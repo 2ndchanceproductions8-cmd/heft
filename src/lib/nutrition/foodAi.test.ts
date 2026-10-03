@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AI_MODEL, AiError, analyzeMeal, answerText, billedCall, priceFor, testApiKey, type AnalyzeInput } from './foodAi';
+import { AI_MODEL, AI_TIMEOUT_MS, AiError, analyzeMeal, answerText, billedCall, priceFor, testApiKey, type AnalyzeInput } from './foodAi';
 import { MEAL_SCHEMA } from './schema';
 
 /*
@@ -292,6 +292,51 @@ describe('analyzeMeal responses', () => {
     );
     await expectAiError(analyzeMeal(INPUT, { ...deps(hang as unknown as typeof fetch), timeoutMs: 20 }), 'timeout');
     expect(hang).toHaveBeenCalledTimes(1);
+  });
+
+  it('the default timeout is the SDK’s 10 minutes (not 180 s), still with no SDK retries', async () => {
+    expect(AI_TIMEOUT_MS).toBe(600_000);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const hang = vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_res, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))),
+      );
+      const p = analyzeMeal(INPUT, deps(hang as unknown as typeof fetch));
+      let settled = false;
+      p.catch(() => undefined).finally(() => (settled = true));
+      await vi.waitFor(() => expect(hang).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(599_000);
+      expect(settled).toBe(false); // 180 s used to end it here, unbilled and unretried
+      await vi.advanceTimersByTimeAsync(1_500);
+      const e = await expectAiError(p, 'timeout');
+      expect(e.calls).toEqual([]);
+      expect(hang).toHaveBeenCalledTimes(1); // maxRetries 0: the SDK never retried the timeout
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a slow answer cut off at max_tokens after 5 minutes still gets its one low-effort retry', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const later = (ms: number, res: () => Response) => () => new Promise<Response>((r) => setTimeout(() => r(res()), ms));
+      const s = stub([
+        later(300_000, () => json(message({ stop_reason: 'max_tokens', content: [{ type: 'thinking', thinking: '', signature: 'x' }], usage: usage(1500, 16000) }))),
+        later(60_000, () => json(message())),
+      ]);
+      const p = analyzeMeal(INPUT, deps(s.fetch));
+      await vi.advanceTimersByTimeAsync(361_000);
+      const r = await p;
+      expect(s.seen.map((x) => (x.body!.output_config as { effort: string }).effort)).toEqual(['medium', 'low']);
+      expect(r.calls.map((c) => [c.ok, c.error])).toEqual([
+        [false, 'truncated'],
+        [true, undefined],
+      ]);
+      expect(r.calls[0].outputTokens).toBe(16000); // the cut-off call is priced and recorded
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

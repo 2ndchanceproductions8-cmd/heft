@@ -66,27 +66,60 @@ describe('nutrient extraction', () => {
     });
   });
 
-  it('falls back to 957 (Atwater general) when 208 is missing, and clamps negative carbs', () => {
+  it('falls back to 958 (Atwater SPECIFIC) when 208 is missing, and clamps negative carbs', () => {
     const fx = foods(chickenFoundationFx as Fx);
     const skinless = choiceFromFdc(fx.find((f) => f.fdcId === 2646170)!)!;
-    expect(skinless.per100g.kcal).toBe(106); // 957 = 106, 958 = 112
+    expect(skinless.per100g.kcal).toBe(112); // 958 = 112, 957 = 106
     expect(skinless.dataType).toBe('Foundation');
     const withSkin = choiceFromFdc(fx.find((f) => f.fdcId === 2727569)!)!;
-    expect(withSkin.per100g.kcal).toBe(127);
+    expect(withSkin.per100g.kcal).toBe(133); // 958 = 133, 957 = 127
     expect(withSkin.per100g.carbsG).toBe(0); // USDA lists -0.428 g
     // a Foundation row without any energy value is unusable
     expect(choiceFromFdc(fx.find((f) => f.fdcId === 2759004)!)).toBeNull();
   });
 
-  it('uses 958 when 208 and 957 are both missing', () => {
+  it('uses 957 (Atwater general) only when 208 and 958 are both missing', () => {
     const p = extractPer100g([
-      { nutrientNumber: '958', value: 112 },
+      { nutrientNumber: '957', value: 106 },
       { nutrientNumber: '203', value: 22.5 },
     ]);
-    expect(p?.kcal).toBe(112);
+    expect(p?.kcal).toBe(106);
     expect(p?.proteinG).toBe(22.5);
     expect(p?.fatG).toBe(0);
     expect(extractPer100g([{ nutrientNumber: '203', value: 1 }])).toBeNull();
+  });
+
+  it('Foundation rows: energy 958 before 957, carbs 205.2 and sugar 269.3 when 205 / 269 are missing', () => {
+    // Shaped like the live Foundation 'apple raw' search (2026-10-03): "Apples, fuji, with skin, raw" lists
+    // 957 = 64.7 and 958 = 58.2 and no 208; its sugars come only as 269.3.
+    const fuji: FdcFood = {
+      fdcId: 1750340,
+      description: 'Apples, fuji, with skin, raw',
+      dataType: 'Foundation',
+      foodNutrients: [
+        { nutrientNumber: '957', nutrientName: 'Energy (Atwater General Factors)', unitName: 'KCAL', value: 64.7 },
+        { nutrientNumber: '958', nutrientName: 'Energy (Atwater Specific Factors)', unitName: 'KCAL', value: 58.2 },
+        { nutrientNumber: '203', value: 0.148 },
+        { nutrientNumber: '204', value: 0.162 },
+        { nutrientNumber: '205.2', nutrientName: 'Carbohydrates, by summation', value: 15.7 },
+        { nutrientNumber: '269.3', nutrientName: 'Sugars, Total', unitName: 'G', value: 13.3 },
+        { nutrientNumber: '307', value: 1 },
+      ],
+    };
+    expect(choiceFromFdc(fuji)!.per100g).toEqual({ kcal: 58.2, proteinG: 0.148, carbsG: 15.7, fatG: 0.162, fiberG: null, sugarG: 13.3, sodiumMg: 1 });
+    // "Beets, raw": sugar only as 269.3 → 5.1 g, not unknown (numbers may also arrive as JSON numbers)
+    expect(extractPer100g([{ nutrientNumber: 957, value: 44 }, { nutrientNumber: 269.3, value: 5.1 }])?.sugarG).toBe(5.1);
+    // the classic numbers still win when present
+    const both = extractPer100g([
+      { nutrientNumber: '957', value: 64.7 },
+      { nutrientNumber: '958', value: 58.2 },
+      { nutrientNumber: '208', value: 52 },
+      { nutrientNumber: '205.2', value: 15.7 },
+      { nutrientNumber: '205', value: 13.8 },
+      { nutrientNumber: '269.3', value: 13.3 },
+      { nutrientNumber: '269', value: 10.4 },
+    ]);
+    expect(both).toMatchObject({ kcal: 52, carbsG: 13.8, sugarG: 10.4 });
   });
 
   it('builds usda:<fdcId> choices with the USDA description as the name', () => {
@@ -205,6 +238,22 @@ describe('searchFoods / bestMatch requests', () => {
     expect(s.calls).toHaveLength(1);
   });
 
+  it('401 / 403 (bad or disabled USDA key) → key_rejected after ONE request: no retry, not the 400 chain', async () => {
+    for (const status of [401, 403]) {
+      resetUsdaDataTypeMemo();
+      const s = stubFetch(() => new Response('{"error":{"code":"API_KEY_INVALID","message":"An invalid api_key was supplied."}}', { status }));
+      const m = await bestMatch('chicken breast, roasted', undefined, { fetch: s.fetch });
+      expect(m).toEqual({ status: 'key_rejected', choice: null, demoKey: true });
+      expect(s.calls).toHaveLength(1);
+
+      // the same once the filter is known rejected (the unfiltered request), and for the search sheet
+      resetUsdaDataTypeMemo('rejected');
+      const s2 = stubFetch(() => new Response('', { status }));
+      expect(await searchFoods('rice', { fetch: s2.fetch })).toEqual({ status: 'key_rejected', foods: [], demoKey: true });
+      expect(s2.calls).toHaveLength(1);
+    }
+  });
+
   it('5xx, network errors and non-JSON bodies → failed', async () => {
     for (const answer of [
       () => new Response('oops', { status: 503 }),
@@ -257,5 +306,99 @@ describe('searchFoods / bestMatch requests', () => {
     const s2 = stubFetch(() => respond(riceFx as Fx));
     expect(await searchFoods('   ', { fetch: s2.fetch })).toEqual({ status: 'ok', foods: [], demoKey: true });
     expect(s2.calls).toHaveLength(0);
+  });
+});
+
+describe('the dataType probe and the per-search budget', () => {
+  const CHICKEN_BODY = (chickenNoDtFx as Fx).body;
+  const lightRes = (status: number, body: unknown = null) =>
+    ({ status, ok: status >= 200 && status < 300, json: async () => body }) as unknown as Response;
+
+  /** A fetch on the fake clock: each request answers after `ms` (null = never) unless its signal aborts first. */
+  function timedFetch(answer: (url: URL) => { ms: number | null; status?: number; body?: unknown }) {
+    const t0 = Date.now();
+    const calls: { dataType: string | null; at: number }[] = [];
+    const fn = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push({ dataType: url.searchParams.get('dataType'), at: Date.now() - t0 });
+      const a = answer(url);
+      return new Promise<Response>((resolve, reject) => {
+        const signal = init?.signal;
+        const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+        if (signal?.aborted) return onAbort();
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (a.ms == null) return;
+        setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve(lightRes(a.status ?? 200, a.body));
+        }, a.ms);
+      });
+    };
+    return { fetch: fn as unknown as typeof fetch, calls };
+  }
+
+  it('the rejected-filter memo is saved on the 400s, before the probe’s unfiltered answer arrives', async () => {
+    let answer!: (r: Response) => void;
+    const s = stubFetch((u) => (u.searchParams.get('dataType') ? respond(chickenCommaDtFx as Fx) : new Promise<Response>((r) => (answer = r))));
+    const probe = bestMatch('chicken breast, roasted', undefined, { fetch: s.fetch });
+    await vi.waitFor(() => expect(s.calls).toHaveLength(3));
+    // the probe's unfiltered request is still in flight, and a new search already skips the filter
+    const s2 = stubFetch(() => respond(riceFx as Fx));
+    expect((await searchFoods('rice, white, cooked', { fetch: s2.fetch })).status).toBe('ok');
+    expect(s2.calls.map((c) => c.url.searchParams.get('dataType'))).toEqual([null]);
+    answer(respond(chickenNoDtFx as Fx));
+    expect((await probe).status).toBe('ok');
+  });
+
+  it('budgetMs starts once a search may send: a 5 s probe does not time out its waiters (2 s budget each)', async () => {
+    vi.useFakeTimers();
+    const t = timedFetch((u) => (u.searchParams.get('dataType') ? { ms: 5000, status: 400 } : { ms: 1000, body: CHICKEN_BODY }));
+    const ps = ['chicken breast roasted', 'roasted chicken breast'].map((q) => bestMatch(q, undefined, { fetch: t.fetch, budgetMs: 2000 }));
+    await vi.advanceTimersByTimeAsync(6000);
+    expect((await Promise.all(ps)).map((r) => r.status)).toEqual(['ok', 'ok']);
+    // the probe's filtered request (off the budget), then both unfiltered requests as soon as it 400'd
+    expect(t.calls).toEqual([
+      { dataType: FDC_DATA_TYPES, at: 0 },
+      { dataType: null, at: 5000 },
+      { dataType: null, at: 5000 },
+    ]);
+  });
+
+  it('budgetMs bounds a search’s own requests (well before the 8 s per-request cap)', async () => {
+    vi.useFakeTimers();
+    resetUsdaDataTypeMemo('rejected');
+    const t = timedFetch(() => ({ ms: null }));
+    const p = searchFoods('rice', { fetch: t.fetch, budgetMs: 2000 });
+    let settled = false;
+    void p.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect((await p).status).toBe('failed');
+  });
+
+  it('a probe that ends without an answer: its waiters send the unfiltered request instead of probing in turn', async () => {
+    const s = stubFetch((u) => (u.searchParams.get('dataType') ? new Response('oops', { status: 503 }) : respond(chickenNoDtFx as Fx)));
+    const rs = await Promise.all(['chicken breast roasted', 'roasted chicken breast', 'chicken roasted'].map((q) => bestMatch(q, undefined, { fetch: s.fetch })));
+    expect(rs.map((r) => r.status)).toEqual(['failed', 'ok', 'ok']);
+    expect(s.calls.map((c) => c.url.searchParams.get('dataType'))).toEqual([FDC_DATA_TYPES, null, null]);
+    // nothing was learned about the filter: the next search probes again
+    const s2 = stubFetch(() => respond(riceFx as Fx));
+    await searchFoods('rice', { fetch: s2.fetch });
+    expect(s2.calls[0].url.searchParams.get('dataType')).toBe(FDC_DATA_TYPES);
+  });
+
+  it("the caller's abort ends a wait on someone else's probe at once (and sends nothing)", async () => {
+    vi.useFakeTimers();
+    const t = timedFetch(() => ({ ms: null }));
+    const probe = bestMatch('chicken breast roasted', undefined, { fetch: t.fetch });
+    const ctl = new AbortController();
+    const waiter = bestMatch('rice', ctl.signal, { fetch: t.fetch });
+    await vi.advanceTimersByTimeAsync(100);
+    ctl.abort();
+    expect((await waiter).status).toBe('failed');
+    expect(t.calls).toHaveLength(1); // only the probe's request
+    await vi.advanceTimersByTimeAsync(8000); // the probe's own request times out
+    expect((await probe).status).toBe('failed');
   });
 });

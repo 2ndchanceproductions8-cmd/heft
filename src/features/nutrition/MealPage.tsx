@@ -5,17 +5,19 @@ import { Button, EmptyState, Loading, Page, toast, TopBar } from '../../componen
 import { useMediaUrls } from '../../lib/media';
 import { analysisInterrupted, runAnalysis, useAnalysisRunning } from '../../lib/nutrition/analyze';
 import { useNutritionKeys } from '../../lib/nutrition/keys';
-import { itemFromChoice, MealBusyError, updateMeal, useMeal } from '../../lib/nutrition/store';
-import type { FoodChoice, Meal } from '../../lib/nutrition/types';
+import { dayKey } from '../../lib/nutrition/math';
+import { MealBusyError, useMeal } from '../../lib/nutrition/store';
+import type { FoodChoice } from '../../lib/nutrition/types';
 import { FoodSearchSheet } from './FoodSearchSheet';
+import { deleteUnfinishedMeal, enterMealManually } from './meal/actions';
 import { MealDoneView } from './meal/MealDoneView';
 import { AnalyzingView, DescriptionCard, MealPhotos, MealProblem } from './meal/MealStates';
 import { diaryPath, logPath, SETTINGS_PATH } from './meal/nav';
 import { BackButton } from './meal/parts';
 
 /**
- * /nutrition/meal/:id — one meal through its whole life: analyzing (spinner), no key / failed (Retry or
- * manual entry), and done (the editor). A draft belongs to the capture screen and is sent back there.
+ * /nutrition/meal/:id — one meal through its whole life: analyzing (spinner), no key / failed (Retry, manual
+ * entry or Delete), and done (the editor). A draft belongs to the capture screen and is sent back there.
  */
 export function MealPage() {
   const { id = '' } = useParams();
@@ -35,6 +37,7 @@ function MealScreen({ id }: { id: string }) {
   const [startError, setStartError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [manual, setManual] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const status = meal?.status;
 
   // A pending meal starts analyzing as soon as it's opened with a key — once per mount.
@@ -65,7 +68,9 @@ function MealScreen({ id }: { id: string }) {
       </Page>
     );
   }
-  if (meal.status === 'draft') return <Navigate to={logPath({ meal: meal.id })} replace />;
+  if (meal.status === 'draft') {
+    return <Navigate to={logPath({ meal: meal.id, d: meal.day !== dayKey(Date.now()) ? meal.day : null })} replace />;
+  }
   if (meal.status === 'done') {
     return (
       <Page>
@@ -104,17 +109,29 @@ function MealScreen({ id }: { id: string }) {
 
   const enterManually = async (c: FoodChoice, grams: number | null) => {
     if (grams == null) return;
-    const item = itemFromChoice(c, grams);
     try {
       // An interrupted analysis left the row 'analyzing' with nothing running: only a forced write clears it.
-      await updateMeal(
-        meal.id,
-        (m: Meal) => ({ items: [...m.items, item], status: 'done', error: null, title: m.title || c.name }),
-        { force: interrupted },
-      );
+      // The meal is final now, so its photos shrink to one (as after an analysis).
+      await enterMealManually(meal.id, c, grams, interrupted);
     } catch (e) {
       toast(e instanceof MealBusyError ? e.message : "Couldn't save that food", 'error');
     }
+  };
+
+  const remove = async () => {
+    if (running || deleting) return;
+    setDeleting(true);
+    try {
+      const to = await deleteUnfinishedMeal(meal);
+      if (to) {
+        toast('Meal deleted', 'success');
+        nav(to, { replace: true });
+        return;
+      }
+    } catch {
+      toast("Couldn't delete the meal", 'error');
+    }
+    setDeleting(false);
   };
 
   const description = meal.input.description?.trim() || undefined;
@@ -136,6 +153,8 @@ function MealScreen({ id }: { id: string }) {
             onRetry={() => void retry()}
             onAddKey={() => nav(SETTINGS_PATH)}
             onManual={() => setManual(true)}
+            onDelete={() => void remove()}
+            deleteDisabled={running || retrying || deleting}
           />
         </div>
       )}

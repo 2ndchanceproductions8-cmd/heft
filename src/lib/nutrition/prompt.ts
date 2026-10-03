@@ -4,6 +4,10 @@
  * nutrient figures are a labelled fallback. The output FORMAT is enforced by structured outputs (schema.ts), so
  * SnapPlate's "STRICT JSON / no fences / match this schema" paragraph is gone; field names are still used
  * below where the guidance refers to them.
+ *
+ * Never ask the model to write out its reasoning or thinking in the answer: on claude-opus-5-5 that is the
+ * documented trigger for a 'reasoning_extraction' refusal, which the server-side fallback does NOT retry. Ask
+ * for an output instead (the assumption behind a hard portion, what a non-food photo shows) — see prompt.test.ts.
  */
 
 export interface PromptInput {
@@ -69,7 +73,7 @@ STEP 4 — Convert volume to mass using typical densities (g per cubic cm):
 - cooked meat, poultry, fish: 1.05 | stew or curry with sauce: 1.0
 - raw leafy salad: 0.2 | chopped raw vegetables: 0.6 | cooked vegetables: 0.85
 - cheese: 1.05 | nuts: 0.6 | oils and butter: 0.92 | milk and most drinks: 1.0
-weight_g = volume_cm3 x density. Show your reasoning in the notes field when a portion is unusually hard to call.
+weight_g = volume_cm3 x density. When a portion is unusually hard to call, note the key assumption (estimated depth, which reference you used) in notes.
 
 STEP 5 — Sanity-check against normal serving sizes. A typical restaurant rice portion is 150-250 g, a chicken breast 120-180 g, a slice of bread 30-40 g. If your figure is far outside the usual range for that food, re-check your scale before committing to it.
 
@@ -79,8 +83,8 @@ If NO scale reference is present, say so in "scale_reference" (null) and in the 
     : 'Be conservative when uncertain. Note any assumptions in the notes field.';
 
   const notFoodGuidance = hasImage
-    ? 'If the image does not depict food (or you cannot tell), set is_food to false, leave items empty, and explain briefly in notes.'
-    : 'If the description does not refer to food (or is missing), set is_food to false, leave items empty, and explain briefly in notes.';
+    ? 'If the image does not depict food (or you cannot tell), set is_food to false, leave items empty, and say in notes, briefly, what the image shows instead.'
+    : 'If the description does not refer to food (or is missing), set is_food to false, leave items empty, and say in notes, briefly, what the description refers to instead.';
 
   return `You are a registered-dietitian-level food-recognition model. Your job is to IDENTIFY the foods and ESTIMATE each item's weight. A nutrition database will supply the actual calories and macros, so identification and portion accuracy are what matter most.
 ${multiFrame}${userContext}

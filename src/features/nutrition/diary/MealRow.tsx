@@ -5,7 +5,11 @@ import { Camera, MessageSquareText, ScanBarcode, Search, TriangleAlert, Zap } fr
 import { Button, Spinner } from '../../../components/ui';
 import { useMediaUrl } from '../../../lib/media';
 import { analysisInterrupted, useAnalysisRunning } from '../../../lib/nutrition/analyze';
+import { getAnthropicKey } from '../../../lib/nutrition/keys';
+import { dayKey } from '../../../lib/nutrition/math';
 import type { Meal, MealInput } from '../../../lib/nutrition/types';
+import { retryMeal } from '../meal/actions';
+import { logPath, mealPath } from '../meal/nav';
 import { ConfidenceBadge, formatKcal, MacroLine } from '../ui';
 
 /** What a Diary row shows. An 'analyzing' meal whose run died with the app (iOS kill) shows as failed. */
@@ -16,10 +20,33 @@ export function rowState(meal: Pick<Meal, 'status'>, interrupted: boolean): RowS
   return meal.status;
 }
 
-/** Where tapping a row goes: drafts resume the capture screen, everything else opens the meal. */
-export function mealHref(meal: Pick<Meal, 'id' | 'status'>): string {
-  const id = encodeURIComponent(meal.id);
-  return meal.status === 'draft' ? `/nutrition/log?meal=${id}` : `/nutrition/meal/${id}`;
+/**
+ * Where tapping a row goes: drafts resume the capture screen (with `&d=` for a draft from another day, so it
+ * keeps logging there), everything else opens the meal.
+ */
+export function mealHref(meal: Pick<Meal, 'id' | 'status' | 'day'>, today: string = dayKey(Date.now())): string {
+  if (meal.status !== 'draft') return mealPath(meal.id);
+  return logPath({ meal: meal.id, d: meal.day && meal.day !== today ? meal.day : null });
+}
+
+/** The button on an unfinished row: Continue (draft), Analyze (waiting), Retry (failed or interrupted). */
+export function rowActionLabel(state: RowState): string | null {
+  return state === 'draft' ? 'Continue' : state === 'pending' ? 'Analyze' : state === 'failed' ? 'Retry' : null;
+}
+
+/**
+ * What a row's button does. Retry with a Claude key starts the analysis right away (not awaited) and opens the
+ * meal, which shows it running; without a key it only opens the meal, which offers "Add Claude key". Analyze
+ * opens the meal, which starts a waiting meal itself when a key is saved. Continue resumes the capture.
+ */
+export function runRowAction(
+  meal: Pick<Meal, 'id' | 'status' | 'day'>,
+  state: RowState,
+  navigate: (to: string) => void,
+  o: { hasKey?: boolean; today?: string } = {},
+): void {
+  if (state === 'failed') retryMeal(meal.id, o.hasKey ?? !!getAnthropicKey(), navigate);
+  else navigate(mealHref(meal, o.today));
 }
 
 const KIND_ICON: Record<MealInput['kind'], ReactNode> = {
@@ -42,12 +69,14 @@ export function MealRowView({
   thumbUrl: string | null;
   state: RowState;
   onOpen: () => void;
-  /** Analyze (pending) / Retry (failed): both open the meal page, which runs the analysis. */
+  /** Analyze (pending) / Retry (failed or interrupted): see runRowAction. */
   onAction: () => void;
 }) {
-  const title = meal.title.trim() || 'Untitled meal';
+  // A meal not analyzed yet has no title: what the user typed names it best.
+  const title = meal.title.trim() || meal.input.description?.trim() || 'Untitled meal';
   const time = format(meal.at, 'h:mm a');
-  const action = state === 'pending' ? 'Analyze' : state === 'failed' ? 'Retry' : null;
+  // A draft row is tapped as a whole ("tap to continue"), so it has no separate button here.
+  const action = state === 'draft' ? null : rowActionLabel(state);
   const error = meal.error?.trim() || (meal.status === 'analyzing' ? 'The analysis was interrupted.' : 'The analysis failed.');
 
   return (
@@ -107,14 +136,14 @@ export function MealRow({ meal }: { meal: Meal }) {
   const thumbUrl = useMediaUrl(meal.photoIds[0]);
   const running = useAnalysisRunning(meal.id);
   const interrupted = meal.status === 'analyzing' && !running && analysisInterrupted(meal);
-  const open = () => navigate(mealHref(meal));
+  const state = rowState(meal, interrupted);
   return (
     <MealRowView
       meal={meal}
       thumbUrl={thumbUrl}
-      state={rowState(meal, interrupted)}
-      onOpen={open}
-      onAction={() => navigate(`/nutrition/meal/${encodeURIComponent(meal.id)}`)}
+      state={state}
+      onOpen={() => navigate(mealHref(meal))}
+      onAction={() => runRowAction(meal, state, navigate)}
     />
   );
 }

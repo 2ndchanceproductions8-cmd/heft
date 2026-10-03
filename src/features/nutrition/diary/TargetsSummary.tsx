@@ -33,7 +33,7 @@ export function TargetsSummary({
 }) {
   if (loading || !totals) {
     return (
-      <Card className="mx-4 flex h-[188px] items-center justify-center">
+      <Card className="mx-4 w-auto! flex h-[188px] items-center justify-center">
         <Spinner />
       </Card>
     );
@@ -41,7 +41,7 @@ export function TargetsSummary({
 
   if (!targets) {
     return (
-      <Card className="mx-4 p-4">
+      <Card className="mx-4 w-auto! p-4">
         <div className="flex items-center gap-4">
           <div className="w-[108px] shrink-0 text-center">
             <div className="text-[30px] leading-none font-bold tabular-nums">{formatKcal(totals.kcal)}</div>
@@ -68,7 +68,7 @@ export function TargetsSummary({
   const left = remaining(targets.kcal, totals.kcal);
   const over = left < 0;
   return (
-    <Card className="mx-4 p-4">
+    <Card className="mx-4 w-auto! p-4">
       <div className="flex items-center gap-4">
         <div className="flex shrink-0 flex-col items-center">
           <Ring value={totals.kcal} max={targets.kcal} size={120}>

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Barcode, KeyRound, Minus, Plus, Search, TriangleAlert, Utensils } from 'lucide-react';
+import { Barcode, KeyRound, Minus, Plus, Search, Trash2, TriangleAlert, Utensils } from 'lucide-react';
 import { Button, cx, IconButton, Spinner } from '../../../components/ui';
 import { MAX_SERVES } from '../../../lib/nutrition/math';
 import type { Confidence, MealInput, Totals } from '../../../lib/nutrition/types';
@@ -70,7 +70,8 @@ export function DescriptionCard({ text }: { text: string }) {
 
 /**
  * The meal can't show numbers yet: either no Claude key is saved ('no_key') or the analysis failed / was
- * interrupted ('failed'). Both offer manual entry.
+ * interrupted ('failed'). Both offer manual entry and, with `onDelete`, deleting the meal (and its photos);
+ * `deleteDisabled` while an analysis of it is running.
  */
 export function MealProblem({
   variant,
@@ -81,6 +82,8 @@ export function MealProblem({
   onRetry,
   onAddKey,
   onManual,
+  onDelete,
+  deleteDisabled,
 }: {
   variant: 'failed' | 'no_key';
   error?: string | null;
@@ -91,7 +94,14 @@ export function MealProblem({
   onRetry: () => void;
   onAddKey: () => void;
   onManual: () => void;
+  onDelete?: () => void;
+  deleteDisabled?: boolean;
 }) {
+  const del = onDelete ? (
+    <Button block variant="danger" className="mt-2" icon={<Trash2 className="h-5 w-5" />} disabled={deleteDisabled} onClick={onDelete}>
+      Delete meal
+    </Button>
+  ) : null;
   if (variant === 'no_key') {
     return (
       <Notice
@@ -106,6 +116,7 @@ export function MealProblem({
             <Button block variant="secondary" onClick={onManual}>
               Enter manually instead
             </Button>
+            {del}
           </>
         }
       >
@@ -132,6 +143,7 @@ export function MealProblem({
           <Button block variant="secondary" onClick={onManual}>
             Enter manually instead
           </Button>
+          {del}
         </>
       }
     >

@@ -24,7 +24,7 @@ export interface FoodSearchSheetProps {
 
 /**
  * Full-height USDA search: recents when the query is empty, otherwise a debounced FoodData Central search.
- * Every response state (loading / no matches / rate limited / unreachable) has its own message.
+ * Every response state (loading / no matches / rate limited / key rejected / unreachable) has its own message.
  */
 export function FoodSearchSheet({ open, onClose, mode, initialQuery, title, onPick }: FoodSearchSheetProps) {
   return (
@@ -46,6 +46,7 @@ type SearchState =
   | { kind: 'loading'; q: string }
   | { kind: 'ok'; q: string; foods: FoodChoice[] }
   | { kind: 'rate_limited'; q: string; demoKey: boolean }
+  | { kind: 'key_rejected'; q: string }
   | { kind: 'failed'; q: string };
 
 const DEBOUNCE_MS = 350;
@@ -84,6 +85,7 @@ function SearchBody({
           if (ctrl.signal.aborted) return;
           if (r.status === 'ok') setState({ kind: 'ok', q: term, foods: r.foods });
           else if (r.status === 'rate_limited') setState({ kind: 'rate_limited', q: term, demoKey: r.demoKey });
+          else if (r.status === 'key_rejected') setState({ kind: 'key_rejected', q: term });
           else setState({ kind: 'failed', q: term });
         })
         .catch(() => {
@@ -132,6 +134,8 @@ function SearchBody({
     );
   } else if (state.kind === 'rate_limited') {
     body = <SearchMessage kind="rate_limited" demoKey={state.demoKey} onRetry={() => setNonce((n) => n + 1)} />;
+  } else if (state.kind === 'key_rejected') {
+    body = <SearchMessage kind="key_rejected" />;
   } else if (state.kind === 'failed') {
     body = <SearchMessage kind="failed" onRetry={() => setNonce((n) => n + 1)} />;
   } else {
@@ -218,7 +222,7 @@ export function FoodRow({ food, onPick, busy, disabled }: { food: FoodChoice; on
   );
 }
 
-export type SearchMessageKind = 'loading' | 'start' | 'no_matches' | 'rate_limited' | 'failed';
+export type SearchMessageKind = 'loading' | 'start' | 'no_matches' | 'rate_limited' | 'key_rejected' | 'failed';
 
 /** The non-result states of the search sheet, each with its own message. */
 export function SearchMessage({
@@ -253,6 +257,10 @@ export function SearchMessage({
     message = demoKey
       ? "USDA's shared demo key is busy — add your free key in Food settings."
       : 'USDA rate limit — try again in a minute.';
+  } else if (kind === 'key_rejected') {
+    // Not a connection problem, and retrying can't help until the key changes.
+    title = 'USDA key rejected';
+    message = 'USDA rejected your key — check it in Food settings.';
   } else {
     title = 'No connection';
     message = "Couldn't reach USDA. Check your connection.";

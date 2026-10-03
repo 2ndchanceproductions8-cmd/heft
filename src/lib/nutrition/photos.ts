@@ -1,5 +1,6 @@
 import { db } from '../../db';
 import { uid } from '../ids';
+import { fitsClaudeImageLimit } from './images';
 import { updateMeal } from './store';
 
 /*
@@ -8,14 +9,32 @@ import { updateMeal } from './store';
  * read is ever stored or sent.
  */
 
-/** Claude's sweet spot: larger images are downscaled server-side anyway (and cost the same tokens). */
-export const MEAL_PHOTO_MAX_DIM = 1568;
+/**
+ * Long edge of a saved meal photo. claude-opus-5-5 reads images up to 2576 px on the long edge (high-res
+ * vision, about w×h/750 tokens, at most ~4,800 per image), so pixels above 1568 are NOT free any more, but
+ * they are used: 2048 keeps a coin or a fork legible for the prompt's scale procedure in a whole-plate shot,
+ * at ~1.7× the image tokens of 1568 (2048×1536 ≈ 4,200 tokens ≈ $0.017 an image at $4/MTok, vs ≈ 2,460).
+ */
+export const MEAL_PHOTO_MAX_DIM = 2048;
 export const MEAL_PHOTO_QUALITY = 0.85;
+/**
+ * Encodes to try in order until one fits Claude's 5 MB-of-base64 limit (images.ts). Measured 2026-10-03 with
+ * libjpeg at q85: a 2048×1536 photo with heavy sensor noise is ~1.3 MB (1.8 MB as base64), so the first rung
+ * is what every real photo gets; only a pathological frame (pure RGB noise, 4:4:4 chroma: 5.0 MB → 6.6 MB
+ * base64) steps down, and 1568 px fits even that.
+ */
+const SAVE_LADDER: readonly (readonly [maxDim: number, quality: number])[] = [
+  [MEAL_PHOTO_MAX_DIM, MEAL_PHOTO_QUALITY],
+  [1568, MEAL_PHOTO_QUALITY],
+  [1568, 0.7],
+  [1024, 0.7],
+];
 /** After analysis only one small photo is kept (it goes into the JSON backup). */
 export const KEPT_PHOTO_MAX_DIM = 640;
 export const KEPT_PHOTO_QUALITY = 0.8;
 
 const UNREADABLE = "Can't read this photo. Use the camera, or pick a JPEG or PNG.";
+const TOO_LARGE = 'This photo is too large to send to Claude. Retake it with the camera.';
 
 /** Thrown when a picked file can't be decoded as an image (e.g. HEIC on a browser that can't read it). */
 export class PhotoError extends Error {
@@ -49,9 +68,9 @@ async function encodeJpeg(bmp: ImageBitmap, maxDim: number, quality: number): Pr
 }
 
 /**
- * Save a meal photo to db.media as a JPEG at most 1568 px on the long edge (Claude's sweet spot). Unlike
- * lib/media.saveImageFile it NEVER stores an undecodable original: it throws PhotoError instead, so nothing
- * Anthropic can't read is ever sent.
+ * Save a meal photo to db.media as a JPEG at most MEAL_PHOTO_MAX_DIM (2048) px on the long edge, small
+ * enough for Claude's 5 MB limit (SAVE_LADDER). Unlike lib/media.saveImageFile it NEVER stores an undecodable
+ * original: it throws PhotoError instead, so nothing Anthropic can't read is ever sent.
  */
 export async function saveMealPhoto(file: Blob): Promise<string> {
   let bmp: ImageBitmap;
@@ -60,14 +79,18 @@ export async function saveMealPhoto(file: Blob): Promise<string> {
   } catch {
     throw new PhotoError(UNREADABLE);
   }
-  let enc: Encoded;
+  let enc: Encoded | null = null;
   try {
-    enc = await encodeJpeg(bmp, MEAL_PHOTO_MAX_DIM, MEAL_PHOTO_QUALITY);
+    for (const [maxDim, quality] of SAVE_LADDER) {
+      enc = await encodeJpeg(bmp, maxDim, quality);
+      if (fitsClaudeImageLimit(enc.blob.size)) break;
+    }
   } catch {
     throw new PhotoError(UNREADABLE);
   } finally {
     bmp.close?.();
   }
+  if (!enc || !fitsClaudeImageLimit(enc.blob.size)) throw new PhotoError(TOO_LARGE);
   const id = 'm_' + uid();
   await db.media.add({ id, blob: enc.blob, type: 'image/jpeg', createdAt: Date.now(), width: enc.width, height: enc.height });
   return id;

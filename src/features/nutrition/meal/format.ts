@@ -28,6 +28,8 @@ export function lookupNote(item: Pick<MealItem, 'lookup'>): string | null {
       return "No database match — Claude's estimate";
     case 'failed':
       return "USDA unreachable — Claude's estimate";
+    case 'key_rejected':
+      return "USDA rejected your key — Claude's estimate";
     default:
       return null;
   }
@@ -57,6 +59,16 @@ export function fromDateTimeLocal(v: string): number | null {
   if (!v) return null;
   const d = parse(v.slice(0, 16), DT_FORMAT, new Date(0));
   return isValid(d) ? d.getTime() : null;
+}
+
+/**
+ * The 'Eaten' field's new time: null for empty / junk, 'future' for a time after `now` (the Diary can't show
+ * future days, so the meal would vanish until then).
+ */
+export function eatenAtFromInput(v: string, now: number): number | 'future' | null {
+  const at = fromDateTimeLocal(v);
+  if (at == null) return null;
+  return at > now ? 'future' : at;
 }
 
 /** "Today" / "Yesterday" / "Thu, Oct 1". */

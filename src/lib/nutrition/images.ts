@@ -3,13 +3,24 @@ import type { AnalyzeImage } from './foodAi';
 
 /*
  * Meal photos → the base64 image blocks Claude receives. Anthropic accepts JPEG / PNG / WebP / GIF up to 5 MB
- * each; meal photos are saved as ≤1568 px JPEGs (photos.ts), so in practice these checks only catch media
- * that came from elsewhere (an old backup, a hand-edited row).
+ * each; meal photos are saved as ≤ 2048 px JPEGs that photos.ts has already checked against this same limit
+ * (fitsClaudeImageLimit; a real 2048×1536 q0.85 photo is ~1-2 MB as base64), so in practice these checks only
+ * catch media that came from elsewhere (an old backup, a hand-edited row).
  */
 
 export const MAX_AI_IMAGES = 4;
 /** Anthropic's per-image limit, measured on the base64 string. */
 export const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024;
+
+/** Length of the base64 encoding of `bytes` bytes (padded, as blobToBase64 produces). */
+export function base64Length(bytes: number): number {
+  return 4 * Math.ceil(bytes / 3);
+}
+
+/** A blob of this many bytes is within Claude's per-image limit once base64-encoded. */
+export function fitsClaudeImageLimit(bytes: number): boolean {
+  return base64Length(bytes) <= MAX_IMAGE_BASE64_BYTES;
+}
 
 const ALLOWED: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 

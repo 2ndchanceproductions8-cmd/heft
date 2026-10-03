@@ -15,10 +15,20 @@ import type { FoodChoice, LookupStatus, Per100g } from './types';
  * encoding (%28/%29 or raw parens, %2C or literal commas) and with or without commas in the query.
  * "Foundation,SR Legacy" works; "Survey" alone is silently ignored; no dataType at all works and includes
  * FNDDS. So the chain below is: SnapPlate's filter → (400) the same without commas in the query → (400) no
- * dataType filter, with Branded results pushed down the ranking. Once the unfiltered request succeeds after
- * the filtered ones 400'd, the filter is remembered as rejected (module + localStorage, 3 days) and later
- * searches go straight to the unfiltered request: with DEMO_KEY's ~10 requests an hour, three requests per
- * item would rate-limit the second meal of the hour.
+ * dataType filter, with Branded results pushed down the ranking. As soon as both filtered variants are
+ * answered 400 (the 400 is the signal), the filter is remembered as rejected (module + localStorage, 3 days)
+ * and later searches go straight to the unfiltered request: with DEMO_KEY's ~10 requests an hour, three
+ * requests per item would rate-limit the second meal of the hour. (If even the unfiltered request 400s, the
+ * query was the problem, not the filter, and the memo is undone.)
+ *
+ * While nobody knows yet whether the filter works, ONE search probes and the others wait for it (see
+ * joinDtProbe). A caller's time budget (`budgetMs`, ground.ts's 6 s per meal item) starts only when its search
+ * may send — never while it waits on someone else's probe — and the probe's own discovery requests are bounded
+ * per request (USDA_TIMEOUT_MS) rather than by the budget, so a slow first answer on weak cellular can't time
+ * out the very answer every other lookup is waiting for.
+ *
+ * HTTP 401/403 (api.data.gov's answer to a missing, invalid or disabled key) is 'key_rejected', never retried
+ * and never reported as a connection problem.
  */
 
 const FDC_SEARCH_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
@@ -30,20 +40,28 @@ const DEFAULT_PAGE_SIZE = 12;
 /** The unfiltered request may return Branded rows; ask for a few more so whole foods still make the page. */
 const UNFILTERED_PAGE_SIZE = 20;
 
-/** Standard USDA nutrient numbers (values are per 100 g for Foundation / SR Legacy / FNDDS / Branded). */
+/**
+ * Standard USDA nutrient numbers (values are per 100 g for Foundation / SR Legacy / FNDDS / Branded).
+ * Foundation rows often lack 208 / 269 / 205 and list their own numbers for the same quantities instead.
+ */
 export const NUTRIENT = {
   energy: '208', // Energy (kcal)
-  energyAtwaterGeneral: '957', // Energy (Atwater General Factors), kcal — Foundation foods often lack 208
+  // Foundation: food-SPECIFIC Atwater factors match SR Legacy's 208 convention; the GENERAL 4-9-4 factors run
+  // ~10% high for fruit and vegetables (Fuji apple: 957 = 64.7 vs 958 = 58.2 kcal), so 957 is the last resort.
   energyAtwaterSpecific: '958', // Energy (Atwater Specific Factors), kcal
+  energyAtwaterGeneral: '957', // Energy (Atwater General Factors), kcal
   protein: '203',
   fat: '204',
   carbs: '205', // Carbohydrate, by difference
+  carbsBySummation: '205.2', // Carbohydrates, by summation (Foundation)
   fiber: '291', // Fiber, total dietary
   sugar: '269', // Sugars, total
+  sugarTotal: '269.3', // Sugars, Total (Foundation's number for the same thing, e.g. "Beets, raw")
   sodium: '307', // Sodium, Na (mg)
 } as const;
 
-export type UsdaStatus = 'ok' | 'rate_limited' | 'failed';
+/** 'key_rejected' = USDA answered 401/403: the saved USDA key is wrong (or disabled). */
+export type UsdaStatus = 'ok' | 'rate_limited' | 'failed' | 'key_rejected';
 
 export interface UsdaSearchResult {
   status: UsdaStatus;
@@ -216,9 +234,10 @@ export function scoreCandidate(query: string, food: Pick<FdcFood, 'description' 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /**
- * Per-100 g nutrients from an FDC nutrient list. Energy: 208, else 957, else 958 (Atwater), else null (the row
- * is unusable). Fiber / sugar / sodium that aren't listed are null (unknown), never 0. Negative values (USDA's
- * "carbohydrate by difference" can be slightly negative) are clamped to 0.
+ * Per-100 g nutrients from an FDC nutrient list. Energy: 208, else 958 (Atwater specific), else 957 (Atwater
+ * general), else null (the row is unusable). Carbs: 205, else 205.2; sugar: 269, else 269.3. Fiber / sugar /
+ * sodium that aren't listed are null (unknown), never 0. Negative values (USDA's "carbohydrate by difference"
+ * can be slightly negative) are clamped to 0.
  */
 export function extractPer100g(nutrients: FdcNutrient[]): Per100g | null {
   const byNumber = new Map<string, number>();
@@ -227,15 +246,15 @@ export function extractPer100g(nutrients: FdcNutrient[]): Per100g | null {
     if (num && finite(n.value) && !byNumber.has(num)) byNumber.set(num, n.value);
   }
   const get = (num: string): number | null => (byNumber.has(num) ? Math.max(0, byNumber.get(num)!) : null);
-  const energy = get(NUTRIENT.energy) ?? get(NUTRIENT.energyAtwaterGeneral) ?? get(NUTRIENT.energyAtwaterSpecific);
+  const energy = get(NUTRIENT.energy) ?? get(NUTRIENT.energyAtwaterSpecific) ?? get(NUTRIENT.energyAtwaterGeneral);
   if (energy == null) return null;
   return {
     kcal: energy,
     proteinG: get(NUTRIENT.protein) ?? 0,
-    carbsG: get(NUTRIENT.carbs) ?? 0,
+    carbsG: get(NUTRIENT.carbs) ?? get(NUTRIENT.carbsBySummation) ?? 0,
     fatG: get(NUTRIENT.fat) ?? 0,
     fiberG: get(NUTRIENT.fiber),
-    sugarG: get(NUTRIENT.sugar),
+    sugarG: get(NUTRIENT.sugar) ?? get(NUTRIENT.sugarTotal),
     sodiumMg: get(NUTRIENT.sodium),
   };
 }
@@ -306,7 +325,12 @@ export function timeoutSignal(ms: number, outer?: AbortSignal): { signal: AbortS
   };
 }
 
-type Attempt = { kind: 'ok'; foods: FdcFood[] } | { kind: 'bad_request' } | { kind: 'rate_limited' } | { kind: 'failed' };
+type Attempt =
+  | { kind: 'ok'; foods: FdcFood[] }
+  | { kind: 'bad_request' }
+  | { kind: 'rate_limited' }
+  | { kind: 'key_rejected' }
+  | { kind: 'failed' };
 
 async function fdcGet(
   query: string,
@@ -322,6 +346,8 @@ async function fdcGet(
   try {
     const res = await doFetch(`${FDC_SEARCH_URL}?${params.toString()}`, { signal: t.signal });
     if (res.status === 429) return { kind: 'rate_limited' };
+    // api.data.gov: API_KEY_MISSING / API_KEY_INVALID / API_KEY_DISABLED. Retrying can't help.
+    if (res.status === 401 || res.status === 403) return { kind: 'key_rejected' };
     if (res.status === 400) return { kind: 'bad_request' };
     if (!res.ok) return { kind: 'failed' };
     const data = (await res.json()) as { foods?: FdcFood[] };
@@ -341,7 +367,8 @@ const DT_TTL_MS = 3 * 864e5;
 type DtState = 'unknown' | 'ok' | 'rejected';
 let dtState: DtState = 'unknown';
 let dtLoaded = false;
-let dtProbe: Promise<void> | null = null;
+/** The search finding out whether the filter works; resolves true when it found out, false when it couldn't. */
+let dtProbe: Promise<boolean> | null = null;
 
 function loadDtState(): void {
   if (dtLoaded) return;
@@ -354,7 +381,7 @@ function loadDtState(): void {
   }
 }
 
-function setDtState(s: 'ok' | 'rejected'): void {
+function setDtState(s: DtState): void {
   dtState = s;
   try {
     if (s === 'rejected') localStorage.setItem(DT_STORE_KEY, String(Date.now()));
@@ -371,46 +398,105 @@ export function resetUsdaDataTypeMemo(state: DtState = 'unknown'): void {
   dtProbe = null;
 }
 
+interface ProbeTicket {
+  /** Set when THIS search is the probe: settle() once the filter's fate is known, or when the search ends. */
+  probe: { settle: () => void } | null;
+  /** The probe this search waited for ended without an answer (network, 429, abort): don't filter. */
+  inconclusive: boolean;
+}
+
+const NO_PROBE: ProbeTicket = { probe: null, inconclusive: false };
+
+/** Wait for a probe to settle, or for the caller's abort (a cancelled search must not sit in the queue). */
+function waitForProbe(probe: Promise<boolean>, signal?: AbortSignal): Promise<'decided' | 'inconclusive' | 'aborted'> {
+  if (signal?.aborted) return Promise.resolve('aborted');
+  return new Promise((resolve) => {
+    const onAbort = () => resolve('aborted');
+    signal?.addEventListener('abort', onAbort, { once: true });
+    void probe.then((decided) => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(decided ? 'decided' : 'inconclusive');
+    });
+  });
+}
+
 /**
  * While nobody knows yet whether the filter works, let ONE search find out and make the others wait for it
- * (a 4-item meal would otherwise spend 12 DEMO_KEY requests on the first lookup). Returns a release function
- * when this call is the probe.
+ * (a 4-item meal would otherwise spend 12 DEMO_KEY requests on the first lookup). The probe settles as soon as
+ * it knows — before its own unfiltered request — so the waiters' requests run alongside it. When a probe ends
+ * without an answer, its waiters send the unfiltered request (always valid) instead of probing one after the
+ * other; the next search probes again.
  */
-async function joinDtProbe(): Promise<(() => void) | null> {
+async function joinDtProbe(signal?: AbortSignal): Promise<ProbeTicket> {
   loadDtState();
-  while (dtState === 'unknown' && dtProbe) await dtProbe;
-  if (dtState !== 'unknown') return null;
-  let release!: () => void;
-  dtProbe = new Promise<void>((r) => (release = r));
-  return () => {
-    dtProbe = null;
-    release();
+  while (dtState === 'unknown' && dtProbe) {
+    const r = await waitForProbe(dtProbe, signal);
+    if (r === 'aborted') return NO_PROBE;
+    if (r === 'inconclusive') return { probe: null, inconclusive: true };
+  }
+  if (dtState !== 'unknown' || signal?.aborted) return NO_PROBE;
+  let resolve!: (decided: boolean) => void;
+  const mine = new Promise<boolean>((r) => (resolve = r));
+  dtProbe = mine;
+  let open = true;
+  return {
+    probe: {
+      settle: () => {
+        if (!open) return;
+        open = false;
+        if (dtProbe === mine) dtProbe = null;
+        resolve(dtState !== 'unknown');
+      },
+    },
+    inconclusive: false,
   };
 }
 
+export interface SearchOptions {
+  pageSize?: number;
+  /** The caller's abort (also ends a wait on another search's probe). */
+  signal?: AbortSignal;
+  fetch?: typeof fetch;
+  /**
+   * Time budget (ms) for this search's own requests. It starts once the search may send (after any wait on
+   * another search's dataType probe) and does not cover a probe's discovery requests, which are bounded per
+   * request instead (see the file header). Without it, only the per-request USDA_TIMEOUT_MS applies.
+   */
+  budgetMs?: number;
+}
+
 /** Ranked USDA FoodData Central search (GET only, no custom headers → no CORS preflight). */
-export async function searchFoods(
-  query: string,
-  opts: { pageSize?: number; signal?: AbortSignal; fetch?: typeof fetch } = {},
-): Promise<UsdaSearchResult> {
+export async function searchFoods(query: string, opts: SearchOptions = {}): Promise<UsdaSearchResult> {
   const apiKey = fdcKeyOrDemo();
   const demoKey = apiKey === FDC_DEMO_KEY;
   const q = query.trim().replace(/\s+/g, ' ');
   if (!q) return { status: 'ok', foods: [], demoKey };
   const doFetch = opts.fetch ?? ((input, init) => fetch(input, init));
   const pageSize = Math.max(1, Math.min(50, Math.round(opts.pageSize ?? DEFAULT_PAGE_SIZE)));
+  const failed: UsdaSearchResult = { status: 'failed', foods: [], demoKey };
 
-  const release = await joinDtProbe();
+  const ticket = await joinDtProbe(opts.signal);
+  // The budget starts on this search's first budgeted request, so never while it waited above.
+  let budget = null as ReturnType<typeof timeoutSignal> | null; // (assigned in a closure: no narrowing to null)
+  const budgeted = (): AbortSignal | undefined => {
+    if (!opts.budgetMs || opts.budgetMs <= 0) return opts.signal;
+    if (!budget) budget = timeoutSignal(opts.budgetMs, opts.signal);
+    return budget.signal;
+  };
+  // A probe's filtered requests are discovery for everyone: off the budget (each still capped at 8 s).
+  const filteredSignal = () => (ticket.probe ? opts.signal : budgeted());
+  const get = (text: string, size: number, dataType: string | null, signal: AbortSignal | undefined) =>
+    fdcGet(text, size, dataType, apiKey, doFetch, signal);
+  const done = (a: Attempt): UsdaSearchResult => {
+    if (a.kind === 'ok') return { status: 'ok', foods: rankFoods(q, a.foods).slice(0, pageSize), demoKey };
+    return a.kind === 'bad_request' ? failed : { status: a.kind, foods: [], demoKey };
+  };
+
   try {
-    if (opts.signal?.aborted) return { status: 'failed', foods: [], demoKey };
-    const done = (a: Attempt): UsdaSearchResult =>
-      a.kind === 'ok'
-        ? { status: 'ok', foods: rankFoods(q, a.foods).slice(0, pageSize), demoKey }
-        : { status: a.kind === 'rate_limited' ? 'rate_limited' : 'failed', foods: [], demoKey };
-
-    let filterRejected = dtState === 'rejected';
-    if (!filterRejected) {
-      const first = await fdcGet(q, pageSize, FDC_DATA_TYPES, apiKey, doFetch, opts.signal);
+    if (opts.signal?.aborted) return failed;
+    let before: DtState | null = null; // the memo before THIS search marked the filter rejected
+    if (dtState !== 'rejected' && !ticket.inconclusive) {
+      const first = await get(q, pageSize, FDC_DATA_TYPES, filteredSignal());
       if (first.kind === 'ok') {
         if (dtState !== 'ok') setDtState('ok');
         return done(first);
@@ -419,31 +505,40 @@ export async function searchFoods(
       // 400 → once more without commas (keep the filter)…
       const noCommas = q.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
       if (noCommas !== q) {
-        const second = await fdcGet(noCommas, pageSize, FDC_DATA_TYPES, apiKey, doFetch, opts.signal);
+        const second = await get(noCommas, pageSize, FDC_DATA_TYPES, filteredSignal());
         if (second.kind === 'ok') {
           if (dtState !== 'ok') setDtState('ok'); // it was this query's commas, not the filter
           return done(second);
         }
         if (second.kind !== 'bad_request') return done(second);
       }
-      filterRejected = true;
+      // Both filtered variants were answered 400: that IS the signal. Remember it now and let the searches
+      // waiting on this probe go, before (and whatever then happens to) our own unfiltered request.
+      before = dtState;
+      setDtState('rejected');
+      ticket.probe?.settle();
     }
     // …then without the dataType filter (Branded rows are penalized in the ranking).
-    const last = await fdcGet(q, Math.max(pageSize, UNFILTERED_PAGE_SIZE), null, apiKey, doFetch, opts.signal);
-    if (last.kind === 'ok' && filterRejected && dtState !== 'rejected') setDtState('rejected');
-    return last.kind === 'bad_request' ? { status: 'failed', foods: [], demoKey } : done(last);
+    const last = await get(q, Math.max(pageSize, UNFILTERED_PAGE_SIZE), null, budgeted());
+    if (last.kind === 'bad_request') {
+      // Even the unfiltered request 400'd: the query is the problem, not the filter, so undo the memo.
+      if (before && dtState === 'rejected') setDtState(before);
+      return failed;
+    }
+    return done(last);
   } finally {
-    release?.();
+    budget?.done();
+    ticket.probe?.settle();
   }
 }
 
-/** Best single USDA match for Claude's fdc_query. */
+/** Best single USDA match for Claude's fdc_query. `budgetMs`: see SearchOptions (ground.ts passes 6 s per item). */
 export async function bestMatch(
   query: string,
   signal?: AbortSignal,
-  deps: { fetch?: typeof fetch } = {},
+  deps: { fetch?: typeof fetch; budgetMs?: number } = {},
 ): Promise<{ status: LookupStatus; choice: FoodChoice | null; demoKey: boolean }> {
-  const r = await searchFoods(query, { signal, fetch: deps.fetch });
+  const r = await searchFoods(query, { signal, fetch: deps.fetch, budgetMs: deps.budgetMs });
   if (r.status !== 'ok') return { status: r.status, choice: null, demoKey: r.demoKey };
   const choice = r.foods[0] ?? null;
   return { status: choice ? 'ok' : 'no_match', choice, demoKey: r.demoKey };

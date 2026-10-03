@@ -24,7 +24,7 @@ export function TargetsCard({
 }) {
   if (!targets || !auto) {
     return (
-      <Card className="mx-4 flex items-start gap-3 p-4">
+      <Card className="mx-4 w-auto! flex items-start gap-3 p-4">
         <Target className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[14px] leading-snug text-muted">
           Add your {missing.length ? joinFields(missing) : 'body details'} under Body to see your daily targets.
@@ -34,7 +34,7 @@ export function TargetsCard({
   }
   return (
     <>
-      <Card className="mx-4 p-4">
+      <Card className="mx-4 w-auto! p-4">
         <div className="grid grid-cols-3 gap-3">
           <Stat label="BMR" value={formatKcal(targets.bmr)} />
           <Stat label="Maintenance" value={formatKcal(targets.tdee)} />

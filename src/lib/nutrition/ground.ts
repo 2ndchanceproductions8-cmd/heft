@@ -13,8 +13,18 @@ import type { LookupStatus, MealItem } from './types';
  */
 
 export const GROUND_CONCURRENCY = 4;
-/** Per item, across USDA's own retries (usda.ts has an 8 s per-request timeout on top). */
-export const GROUND_ITEM_TIMEOUT_MS = 6000;
+/**
+ * Per item: the time budget for the item's OWN USDA request(s). usda.ts starts it once the lookup may send,
+ * after any wait on another item's dataType probe, so one slow probe can't use up every item's time (on weak
+ * cellular, items 2-4 used to fall back to estimates while item 1 was still finding out about the filter).
+ */
+export const GROUND_ITEM_BUDGET_MS = 6000;
+/**
+ * Safety net only: no lookup holds the meal longer than this, whatever happens below. usda.ts's own worst case
+ * is about 22 s (a probe's two filtered requests at its 8 s per-request cap, then the 6 s budget); a typical
+ * item takes well under 2 s.
+ */
+export const GROUND_ITEM_CAP_MS = 30_000;
 
 export interface GroundResult {
   items: MealItem[];
@@ -28,7 +38,10 @@ export interface GroundOptions {
   signal?: AbortSignal;
   /** Injected in tests. */
   bestMatch?: typeof bestMatch;
-  timeoutMs?: number;
+  /** Per-item budget passed to bestMatch (default GROUND_ITEM_BUDGET_MS). */
+  budgetMs?: number;
+  /** Hard per-item cap (default GROUND_ITEM_CAP_MS). */
+  capMs?: number;
 }
 
 /** Run `fn` over `xs` with at most `limit` in flight; results keep input order. */
@@ -47,7 +60,8 @@ async function mapLimit<T, R>(xs: T[], limit: number, fn: (x: T, i: number) => P
 
 export async function groundItems(aiItems: AiItem[], opts: GroundOptions = {}): Promise<GroundResult> {
   const match = opts.bestMatch ?? bestMatch;
-  const timeoutMs = opts.timeoutMs ?? GROUND_ITEM_TIMEOUT_MS;
+  const budgetMs = opts.budgetMs ?? GROUND_ITEM_BUDGET_MS;
+  const capMs = opts.capMs ?? GROUND_ITEM_CAP_MS;
   let anyRateLimited = false;
   let demoKey = false;
 
@@ -57,12 +71,13 @@ export async function groundItems(aiItems: AiItem[], opts: GroundOptions = {}): 
     let status: LookupStatus = 'skipped';
     let choice: Awaited<ReturnType<typeof bestMatch>>['choice'] = null;
     if (query) {
-      const t = timeoutSignal(timeoutMs, opts.signal);
+      const t = timeoutSignal(capMs, opts.signal);
       try {
         if (t.signal.aborted) throw new Error('aborted');
-        // The per-item timeout also wins while a lookup waits on usda.ts's dataType probe.
+        // The budget is bestMatch's to enforce (it knows when the item may send); the cap and the caller's
+        // abort win here even against a lookup that ignores its signal.
         const r = await Promise.race([
-          match(query, t.signal),
+          match(query, t.signal, { budgetMs }),
           new Promise<never>((_res, rej) => {
             if (t.signal.aborted) rej(new Error('aborted'));
             t.signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true });

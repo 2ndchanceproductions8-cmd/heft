@@ -150,6 +150,14 @@ export function useUnfinishedMeals(): Meal[] | undefined {
   );
 }
 
+/**
+ * Ledger-only write for billed calls whose meal row is gone (deleted / restored away mid-analysis): the money
+ * was spent either way, so the meter must still count it.
+ */
+export async function recordSpend(mealId: string, calls: AiCall[]): Promise<void> {
+  if (calls.length) await db.aiSpend.bulkAdd(spendRows(mealId, calls));
+}
+
 /** Claude spend billed since `since` (epoch ms), from the ledger: counts deleted and back-dated meals too. */
 export async function loadAiSpend(since: number): Promise<{ costUsd: number; calls: number }> {
   let costUsd = 0;

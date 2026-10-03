@@ -8,6 +8,7 @@ import {
   deleteMeal,
   foodByBarcode,
   loadAiSpend,
+  recordSpend,
   loadTargets,
   MealBusyError,
   updateItem,
@@ -196,5 +197,12 @@ describe('spend ledger', () => {
     expect((await updateItem(m.id, 'a', { grams: 150 }))!.day).toBe('2026-10-02');
     const moved = await updateMeal(m.id, { at: new Date(2026, 9, 1, 9).getTime() });
     expect(moved!.day).toBe('2026-10-01');
+  });
+});
+
+describe('recordSpend', () => {
+  it('writes ledger rows without a meal row (meal deleted mid-analysis)', async () => {
+    await recordSpend('gone', [{ at: AT, model: 'claude-opus-5-5', inputTokens: 1, outputTokens: 1, costUsd: 0.5, ok: true }]);
+    expect((await loadAiSpend(AT - 1)).costUsd).toBeCloseTo(0.5, 10);
   });
 });

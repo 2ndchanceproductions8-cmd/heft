@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button, cx, Segmented, Sheet } from '../../components/ui';
 import { displayMass, massToG, massUnitFor, parseDecimal, type MassUnit } from '../../lib/units';
 import { useSettings } from '../../lib/settings';
@@ -147,9 +147,72 @@ export function useMassUnit(): [MassUnit, (u: MassUnit) => void] {
   return [mu, setMu];
 }
 
+/** A mass for a text field in `mu` ('' when unknown). */
+export function massText(grams: number | null | undefined, mu: MassUnit): string {
+  const v = displayMass(grams ?? null, mu);
+  return v == null ? '' : String(v);
+}
+
+/**
+ * The typed amount re-expressed after a g/oz flip: the toggle CONVERTS what was typed (250 g → 8.8 oz), it
+ * never reinterprets or replaces it. Empty / junk / zero text is left as typed.
+ */
+export function convertMassText(text: string, from: MassUnit, to: MassUnit): string {
+  if (from === to) return text;
+  const v = parseDecimal(text);
+  if (v == null || !(v > 0)) return text;
+  return massText(massToG(v, from), to) || text;
+}
+
+/**
+ * Exact grams behind a programmatically filled field. The field shows a ROUNDED value (15 g reads "0.5" oz),
+ * so while the text still equals that rounding of `exact`, the exact grams are what the user means: saving
+ * logs 15 g (not 14.2) and flipping g/oz re-renders from 15 g (not from 0.5 oz → 14 g). Once the user types
+ * something else, the typed value wins.
+ */
+export function gramsFromField(text: string, mu: MassUnit, exact: number | null): number | null {
+  if (exact != null && exact > 0 && text === massText(exact, mu)) return exact;
+  const v = parseDecimal(text);
+  return v != null && v > 0 ? massToG(v, mu) : null;
+}
+
+/** The field's text after a g/oz flip (see gramsFromField for why `exact` matters). */
+export function flipMassText(text: string, from: MassUnit, to: MassUnit, exact: number | null): string {
+  if (exact != null && exact > 0 && text === massText(exact, from)) return massText(exact, to);
+  return convertMassText(text, from, to);
+}
+
+/** One-tap amount chips (label serving, 100 g): 40 px tall touch targets. */
+export function QuickAmounts({
+  quick,
+  mu,
+  onPick,
+}: {
+  quick: { label: string; grams: number }[];
+  mu: MassUnit;
+  onPick: (text: string, grams: number) => void;
+}) {
+  if (!quick.length) return null;
+  return (
+    <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+      {quick.map((q) => (
+        <button
+          key={q.label}
+          type="button"
+          onClick={() => onPick(massText(q.grams, mu), q.grams)}
+          className="h-10 shrink-0 rounded-full bg-surface-2 px-3.5 text-[14px] font-medium text-fg active:bg-surface-3"
+        >
+          {q.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Bottom sheet that asks for a weight (g/oz toggle) — the ONE gram-entry UI for "add a food", barcode
  * products and edits. `onSave(grams)`; a `quick` list offers one-tap amounts (e.g. the label serving).
+ * Opening fills in `initialGrams`; flipping g/oz while open converts whatever is typed.
  */
 export function GramsSheet({
   open,
@@ -173,16 +236,23 @@ export function GramsSheet({
 }) {
   const [mu, setMu] = useMassUnit();
   const [text, setText] = useState('');
+  // Grams behind a filled-in value (initial amount or a chip); see gramsFromField.
+  const exact = useRef<number | null>(null);
+  const prev = useRef({ open: false, mu });
   useEffect(() => {
-    if (open) {
-      const v = displayMass(initialGrams ?? null, mu);
-      setText(v == null ? '' : String(v));
-    }
-    // Only when the sheet opens (or the unit flips) — not on every keystroke.
+    const was = prev.current;
+    prev.current = { open, mu };
+    if (!open) return;
+    // Opening: start from the initial amount. A unit flip while open (the toggle, or settings loading):
+    // convert the CURRENT text, so a typed 250 g becomes 8.8 oz instead of the initial amount coming back.
+    if (!was.open) {
+      exact.current = initialGrams ?? null;
+      setText(massText(initialGrams, mu));
+    } else if (was.mu !== mu) setText((t) => flipMassText(t, was.mu, mu, exact.current));
+    // initialGrams is read only at the moment the sheet opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mu]);
-  const value = parseDecimal(text);
-  const grams = value != null && value > 0 ? massToG(value, mu) : null;
+  const grams = gramsFromField(text, mu, exact.current);
   const save = () => {
     if (grams == null) return;
     onSave(Math.round(grams * 10) / 10);
@@ -216,18 +286,14 @@ export function GramsSheet({
           />
         </div>
         {quick?.length ? (
-          <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
-            {quick.map((q) => (
-              <button
-                key={q.label}
-                type="button"
-                onClick={() => setText(String(displayMass(q.grams, mu) ?? ''))}
-                className="h-9 shrink-0 rounded-full bg-surface-2 px-3.5 text-[14px] font-medium text-fg active:bg-surface-3"
-              >
-                {q.label}
-              </button>
-            ))}
-          </div>
+          <QuickAmounts
+            quick={quick}
+            mu={mu}
+            onPick={(t, g) => {
+              exact.current = g;
+              setText(t);
+            }}
+          />
         ) : null}
         <Button block size="lg" disabled={grams == null} onClick={save}>
           {saveLabel}

@@ -5,20 +5,12 @@ import { Button, EmptyState, Loading, Page, Spinner, TextField, toast, TopBar } 
 import { decodeBarcodeFromImage, normalizeBarcode } from '../../lib/nutrition/barcode';
 import { atForDay, dayKey } from '../../lib/nutrition/math';
 import { lookupBarcode } from '../../lib/nutrition/off';
-import {
-  addItem,
-  choiceFromFood,
-  createMeal,
-  foodByBarcode,
-  itemFromChoice,
-  MealBusyError,
-  upsertFood,
-  useMeal,
-} from '../../lib/nutrition/store';
-import type { FoodChoice } from '../../lib/nutrition/types';
+import { choiceFromFood, createMeal, foodByBarcode, itemFromChoice, MealBusyError, upsertFood, useMeal } from '../../lib/nutrition/store';
+import type { FoodChoice, Meal } from '../../lib/nutrition/types';
 import { FoodSearchSheet } from './FoodSearchSheet';
+import { addProductToMeal } from './meal/actions';
 import { barcodeCandidates, dayLabel, mealDisplayTitle, per100Line, quickAmounts } from './meal/format';
-import { diaryPath, historyIdx, mealPath, validDay } from './meal/nav';
+import { diaryPath, historyIdx, logPath, mealPath, validDay } from './meal/nav';
 import { BackButton, Notice } from './meal/parts';
 import { ProductCard } from './scan/ProductCard';
 import { GramsSheet } from './ui';
@@ -31,10 +23,24 @@ type ScanState =
   | { kind: 'not_found'; code: string }
   | { kind: 'unavailable'; code: string };
 
+/** The banner over the scanner: what the product will be logged into. */
+export function scanTargetBanner(target: Pick<Meal, 'status' | 'day' | 'photoIds' | 'title' | 'items' | 'input'> | null, day: string | null, today: string) {
+  if (target && target.status !== 'draft') return { kind: 'adding' as const, text: `Adding to ${mealDisplayTitle(target)}` };
+  // A capture draft ("Scan a barcode instead") becomes a new meal on its own day, keeping its photos.
+  const on = target ? target.day : day;
+  const n = target?.photoIds.length ?? 0;
+  return {
+    kind: 'new' as const,
+    day: on && on !== today ? `Logging for ${dayLabel(on, today)}` : null,
+    photos: n ? (n === 1 ? 'Your photo stays with this meal' : 'Your first photo stays with this meal') : null,
+  };
+}
+
 /**
  * /nutrition/scan — a product's numbers straight from its label (Open Food Facts). No live viewfinder: an iOS
  * home-screen app re-asks for camera permission on every launch, so the barcode is read from a photo (which
- * is NOT saved) or typed. `?meal=<id>` adds the product to that meal; otherwise it becomes a new meal on `?d`.
+ * is NOT saved) or typed. `?meal=<id>` adds the product to that meal (a capture DRAFT becomes the finished
+ * meal, photos kept); otherwise it becomes a new meal on `?d`.
  */
 export function ScanPage() {
   const nav = useNavigate();
@@ -42,6 +48,7 @@ export function ScanPage() {
   const mealId = params.get('meal');
   const day = validDay(params.get('d'));
   const target = useMeal(mealId);
+  const isDraft = target?.status === 'draft';
   const [code, setCode] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
   const [state, setState] = useState<ScanState>({ kind: 'idle' });
@@ -53,7 +60,9 @@ export function ScanPage() {
   useEffect(() => () => ctrlRef.current?.abort(), []);
 
   const back = () => {
-    if (historyIdx() > 0) nav(-1);
+    // A capture draft goes back to its capture screen (the capture page replaced itself with this one).
+    if (mealId && isDraft) nav(logPath({ meal: mealId, d: day }), { replace: true });
+    else if (historyIdx() > 0) nav(-1);
     else nav(mealId ? mealPath(mealId) : diaryPath(day), { replace: true });
   };
 
@@ -140,9 +149,10 @@ export function ScanPage() {
           // Caching the product is a convenience; logging it still goes through.
         }
       }
-      const item = itemFromChoice(food, grams);
       if (mealId) {
-        const saved = await addItem(mealId, item);
+        // A draft from the capture screen becomes this finished meal (photos shrunk to one); any other meal
+        // just gets the item.
+        const saved = await addProductToMeal(mealId, food, grams, via);
         if (!saved) {
           toast('That meal no longer exists', 'error');
           setSaving(false);
@@ -150,6 +160,7 @@ export function ScanPage() {
         }
         nav(mealPath(mealId), { replace: true });
       } else {
+        const item = itemFromChoice(food, grams);
         const m = await createMeal({
           input: { kind: via },
           status: 'done',
@@ -200,17 +211,23 @@ export function ScanPage() {
   const busy = state.kind === 'decoding' || state.kind === 'looking' || saving;
   const today = dayKey(Date.now());
   const found = state.kind === 'found' ? state : null;
+  const banner = scanTargetBanner(target ?? null, day, today);
 
   return (
     <Page>
       {header}
       <div className="space-y-3 px-4 pt-4">
-        {target ? (
-          <div className="truncate rounded-xl bg-accent-soft px-3 py-2 text-[14px] font-medium text-accent">Adding to {mealDisplayTitle(target)}</div>
-        ) : day && day !== today ? (
-          <div className="flex items-center gap-2 rounded-xl bg-accent-soft px-3 py-2 text-[14px] font-medium text-accent">
-            <CalendarDays className="h-4 w-4" />
-            Logging for {dayLabel(day, today)}
+        {banner.kind === 'adding' ? (
+          <div className="truncate rounded-xl bg-accent-soft px-3 py-2 text-[14px] font-medium text-accent">{banner.text}</div>
+        ) : banner.day || banner.photos ? (
+          <div className="space-y-0.5 rounded-xl bg-accent-soft px-3 py-2 text-[14px] font-medium text-accent">
+            {banner.day ? (
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4" />
+                {banner.day}
+              </div>
+            ) : null}
+            {banner.photos ? <div>{banner.photos}</div> : null}
           </div>
         ) : null}
 
@@ -333,7 +350,7 @@ export function ScanPage() {
         subtitle={found ? `Per 100 g: ${per100Line(found.food.per100g)}` : undefined}
         initialGrams={found?.food.servingG ?? null}
         quick={quickAmounts(found?.food.servingG)}
-        saveLabel={mealId ? 'Add to meal' : 'Log it'}
+        saveLabel={mealId && !isDraft ? 'Add to meal' : 'Log it'}
         onSave={(g) => {
           if (found) void commit(found.food, g, 'barcode');
         }}

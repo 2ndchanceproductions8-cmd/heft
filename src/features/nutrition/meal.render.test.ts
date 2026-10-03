@@ -7,20 +7,22 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { dayKey, recomputeMeal, shiftDay } from '../../lib/nutrition/math';
 import type { FoodChoice, Meal, MealItem, NutrientSource, Per100g } from '../../lib/nutrition/types';
-import { SourceChip } from './ui';
+import { convertMassText, flipMassText, gramsFromField, massText, QuickAmounts, SourceChip } from './ui';
 import { FoodRow, SearchMessage } from './FoodSearchSheet';
-import { CapturePage, parseWeightField } from './CapturePage';
+import { captureDay, CapturePage, draftText, parseWeightField } from './CapturePage';
 import { MealPage } from './MealPage';
-import { ScanPage } from './ScanPage';
+import { ScanPage, scanTargetBanner } from './ScanPage';
 import { ShotTray } from './capture/ShotTray';
 import { DetailsPanel } from './capture/DetailsPanel';
 import { gramsEdited, ItemRow } from './meal/ItemRow';
 import { AnalysisNotes, AnalyzingView, MealProblem, MealSummary } from './meal/MealStates';
-import { MealDoneView, needsFdcKeyBanner } from './meal/MealDoneView';
+import { fdcKeyRejected, MealDoneView, needsFdcKeyBanner } from './meal/MealDoneView';
+import { BackButton, HeaderButton } from './meal/parts';
 import { ProductCard } from './scan/ProductCard';
 import {
   barcodeCandidates,
   dayLabel,
+  eatenAtFromInput,
   fromDateTimeLocal,
   lookupNote,
   matchedLine,
@@ -322,7 +324,10 @@ describe('capture', () => {
     const html = renderToString(h(MemoryRouter, { initialEntries: ['/nutrition/log'] }, h(CapturePage)));
     const out = textOf(html);
     expect(out).toContain('Log food');
-    expect(out).toContain('Cancel');
+    // U2: nothing captured yet: a plain back chevron, no destructive Discard.
+    expect(html).toContain('aria-label="Back to Food"');
+    expect(out).not.toContain('Discard');
+    expect(out).not.toContain('Cancel');
     expect(out).toContain('Take photo');
     expect(out).toContain('From library');
     expect(out).toContain('Put a coin or fork next to the plate so Claude can judge size.');
@@ -476,5 +481,111 @@ describe('helpers', () => {
     expect(needsFdcKeyBanner([chicken], null)).toBe(true);
     expect(needsFdcKeyBanner([chicken], 'my-key')).toBe(false);
     expect(needsFdcKeyBanner([rice], null)).toBe(false);
+  });
+});
+
+describe('review fixes (screens)', () => {
+  it('U1: a meal that is not done offers Delete meal, disabled while its analysis runs', () => {
+    const failed = render(
+      h(MealProblem, { variant: 'failed', error: 'x', hasKey: true, onRetry: noop, onAddKey: noop, onManual: noop, onDelete: noop }),
+    );
+    expect(failed).toMatch(/<button[^>]*>(?:(?!<\/button>).)*Delete meal<\/button>/s);
+    expect(failed).toContain('bg-danger-soft');
+    expect(failed).not.toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Delete meal/s);
+    const noKey = render(h(MealProblem, { variant: 'no_key', hasKey: false, onRetry: noop, onAddKey: noop, onManual: noop, onDelete: noop }));
+    expect(noKey).toContain('Delete meal');
+    const busy = render(
+      h(MealProblem, { variant: 'failed', error: 'x', hasKey: true, onRetry: noop, onAddKey: noop, onManual: noop, onDelete: noop, deleteDisabled: true }),
+    );
+    expect(busy).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Delete meal<\/button>/s);
+  });
+
+  it('U2: the capture exit names what it does; Discard is the separate, red action', () => {
+    const save = render(h(BackButton, { onClick: noop, label: 'Back to Food', text: 'Save for later' }));
+    expect(save).toContain('Save for later');
+    expect(save).not.toContain('aria-label="Back to Food"'); // the visible text names the button
+    expect(render(h(BackButton, { onClick: noop, label: 'Back to Food' }))).toContain('aria-label="Back to Food"');
+    const discard = render(h(HeaderButton, { tone: 'danger', onClick: noop }, 'Discard'));
+    expect(discard).toContain('text-danger');
+    expect(discard).not.toContain('text-accent');
+  });
+
+  it('U6: flipping g/oz converts what was typed, never the initial amount', () => {
+    expect(convertMassText('250', 'g', 'oz')).toBe('8.8');
+    expect(convertMassText('8.8', 'oz', 'g')).toBe('249');
+    expect(convertMassText('12,5', 'oz', 'g')).toBe('354');
+    expect(convertMassText('', 'g', 'oz')).toBe('');
+    expect(convertMassText('0', 'g', 'oz')).toBe('0');
+    expect(convertMassText('.', 'g', 'oz')).toBe('.');
+    expect(convertMassText('250', 'g', 'g')).toBe('250');
+    expect(massText(37, 'g')).toBe('37');
+    expect(massText(null, 'oz')).toBe('');
+  });
+
+  it('U6: quick-amount chips are 40 px touch targets and fill the field in the current unit', () => {
+    const html = render(h(QuickAmounts, { quick: quickAmounts(37), mu: 'g', onPick: noop }));
+    expect(html).toContain('1 serving (37 g)');
+    expect(html).toContain('100 g');
+    expect((html.match(/class="h-10 /g) ?? []).length).toBe(2);
+    expect(html).not.toContain('h-9');
+    expect(render(h(QuickAmounts, { quick: [], mu: 'g', onPick: noop }))).not.toContain('button');
+  });
+
+  it("U7: 'Eaten' can't be set later than now", () => {
+    const now = new Date(2026, 9, 3, 12, 30, 45).getTime();
+    expect(eatenAtFromInput('2026-10-03T12:30', now)).toBe(new Date(2026, 9, 3, 12, 30).getTime());
+    expect(eatenAtFromInput('2026-10-02T23:00', now)).toBe(new Date(2026, 9, 2, 23, 0).getTime());
+    expect(eatenAtFromInput('2026-10-03T12:31', now)).toBe('future');
+    expect(eatenAtFromInput('2026-10-04T08:00', now)).toBe('future');
+    expect(eatenAtFromInput('', now)).toBeNull();
+    // The picker itself is capped at the current minute.
+    const html = render(h(MealDoneView, { meal: meal() }), '/nutrition/meal/meal_1');
+    expect(html).toMatch(/id="meal-eaten-at"[^>]*max="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"/);
+  });
+
+  it('U9: the capture day falls back to a resumed draft from another day', () => {
+    expect(captureDay('2026-10-01', { day: '2026-09-30' }, '2026-10-03')).toBe('2026-10-01'); // ?d= wins
+    expect(captureDay(null, { day: '2026-10-01' }, '2026-10-03')).toBe('2026-10-01');
+    expect(captureDay(null, { day: '2026-10-03' }, '2026-10-03')).toBeNull(); // today = no banner, no ?d
+    expect(captureDay(null, null, '2026-10-03')).toBeNull();
+    expect(draftText('chili', '12,5', 'oz')).toEqual({ description: 'chili', weightG: 354.4 });
+    expect(draftText('', 'abc', 'g')).toEqual({ description: '', weightG: null });
+  });
+
+  it('U4: the scanner says a capture draft becomes a new meal that keeps its photos', () => {
+    const today = '2026-10-03';
+    const d = meal({ status: 'draft', title: '', items: [], photoIds: ['m_1', 'm_2'], at: new Date(2026, 9, 2, 12).getTime(), day: '' });
+    expect(scanTargetBanner(d, '2026-10-02', today)).toEqual({ kind: 'new', day: 'Logging for Yesterday', photos: 'Your first photo stays with this meal' });
+    expect(scanTargetBanner({ ...d, photoIds: ['m_1'], day: today }, null, today)).toEqual({ kind: 'new', day: null, photos: 'Your photo stays with this meal' });
+    expect(scanTargetBanner(meal(), null, today)).toEqual({ kind: 'adding', text: 'Adding to Chicken rice bowl' });
+    expect(scanTargetBanner(null, '2026-10-01', today)).toEqual({ kind: 'new', day: 'Logging for Thu, Oct 1', photos: null });
+  });
+
+  it("U11: a rejected USDA key is said plainly, not called a connection problem", () => {
+    const msg = text(h(SearchMessage, { kind: 'key_rejected', onRetry: noop }));
+    expect(msg).toContain('USDA rejected your key — check it in Food settings.');
+    expect(msg).not.toContain('No connection');
+    expect(msg).not.toContain('Try again'); // retrying can't help until the key changes
+    expect(lookupNote({ lookup: 'key_rejected' })).toBe("USDA rejected your key — Claude's estimate");
+    const rejected: MealItem = { ...chicken, lookup: 'key_rejected' };
+    expect(itemRow(rejected)).toContain("USDA rejected your key — Claude's estimate");
+    expect(fdcKeyRejected([rejected])).toBe(true);
+    expect(fdcKeyRejected([rice, chicken])).toBe(false);
+    const page = render(h(MealDoneView, { meal: meal({ items: [rice, rejected] }) }), '/nutrition/meal/meal_1');
+    expect(page).toContain('USDA rejected your key — check it in Food settings.');
+    expect(page).not.toContain("USDA's shared key is busy");
+  });
+});
+
+describe('GramsSheet precision (exact grams behind a rounded field)', () => {
+  it('an untouched 15 g label serving shown as 0.5 oz still logs 15 g, and flips back to 15 g', () => {
+    expect(massText(15, 'oz')).toBe('0.5');
+    expect(gramsFromField('0.5', 'oz', 15)).toBe(15);
+    expect(flipMassText('0.5', 'oz', 'g', 15)).toBe('15');
+  });
+  it('typed values win over the exact amount', () => {
+    expect(gramsFromField('0.6', 'oz', 15)).toBeCloseTo(17.01, 2);
+    expect(flipMassText('250', 'g', 'oz', 15)).toBe('8.8');
+    expect(gramsFromField('', 'g', 15)).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../../db';
-import { blobToBase64, ImageLoadError, loadImagesForAi, MAX_IMAGE_BASE64_BYTES } from './images';
+import { base64Length, blobToBase64, fitsClaudeImageLimit, ImageLoadError, loadImagesForAi, MAX_IMAGE_BASE64_BYTES } from './images';
 
 const put = (id: string, bytes: Uint8Array | string, type: string) =>
   db.media.add({ id, blob: new Blob([bytes as BlobPart], { type }), type, createdAt: 1 });
@@ -40,6 +40,21 @@ describe('loadImagesForAi', () => {
     const raw = Math.ceil((MAX_IMAGE_BASE64_BYTES * 3) / 4) + 3; // base64 grows by 4/3
     await put('big', new Uint8Array(raw), 'image/jpeg');
     await expect(loadImagesForAi(['big'])).rejects.toThrow(/larger than the 5 MB/);
+  });
+
+  it('fitsClaudeImageLimit (used by photos.ts before saving) matches the guard here, to the byte', async () => {
+    const maxRaw = (MAX_IMAGE_BASE64_BYTES / 4) * 3; // 3,932,160 bytes
+    expect(base64Length(maxRaw)).toBe(MAX_IMAGE_BASE64_BYTES);
+    expect(base64Length(1)).toBe(4);
+    expect(fitsClaudeImageLimit(maxRaw)).toBe(true);
+    expect(fitsClaudeImageLimit(maxRaw + 1)).toBe(false);
+    await put('edge', new Uint8Array(maxRaw), 'image/jpeg');
+    expect((await loadImagesForAi(['edge']))[0].data).toHaveLength(MAX_IMAGE_BASE64_BYTES);
+    await put('over', new Uint8Array(maxRaw + 1), 'image/jpeg');
+    await expect(loadImagesForAi(['over'])).rejects.toThrow(/larger than the 5 MB/);
+    // 2048×1536 at q 0.85 (libjpeg, measured 2026-10-03): 1.34 MB with heavy sensor noise, 2.38 MB for pure
+    // noise with 4:2:0 chroma, so a 2048 px meal photo is far inside the limit
+    for (const bytes of [1_340_000, 2_380_000]) expect(fitsClaudeImageLimit(bytes)).toBe(true);
   });
 
   it('blobToBase64 handles large binary blobs (chunked)', async () => {

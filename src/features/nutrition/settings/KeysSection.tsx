@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, KeyRound } from 'lucide-react';
 import { Button, ListGroup, Spinner, TextField, confirm, cx, toast } from '../../../components/ui';
 import { testApiKey } from '../../../lib/nutrition/foodAi';
-import { FDC_DEMO_KEY, looksLikeAnthropicKey, maskKey, setAnthropicKey, setFdcKey } from '../../../lib/nutrition/keys';
+import { FDC_DEMO_KEY, isAnthropicSecret, looksLikeAnthropicKey, maskKey, setAnthropicKey, setFdcKey } from '../../../lib/nutrition/keys';
 
 /*
  * API keys are DEVICE-ONLY (lib/nutrition/keys.ts → localStorage): never in Dexie, never in a backup, never
  * logged, never put in a URL. The paste fields are password inputs outside any <form> (no autofill / save
- * prompts), and a saved key is only ever shown masked.
+ * prompts), and a saved key is only ever shown masked. A Claude key is refused in the USDA field (USDA puts
+ * its key in the request URL).
  */
 
 export const ANTHROPIC_KEYS_URL = 'https://console.anthropic.com/settings/keys';
@@ -52,6 +53,24 @@ function SavedKey({ masked }: { masked: string }) {
       <span className="font-mono text-muted">{masked}</span>
     </div>
   );
+}
+
+/**
+ * Where the Claude key lives, without overclaiming: it is in this app's storage on this phone (which other
+ * pages on the same web address could read), so the advice is a separate, spend-limited key used only here.
+ */
+export const CLAUDE_KEY_NOTE =
+  "Your key is stored in this app on this phone — never in backups or in Heft's code. Use a separate key from a spend-limited workspace used only for Heft.";
+
+export const CLAUDE_KEY_IN_USDA = "That's your Claude key — paste it in the Claude field.";
+
+/** Why a pasted USDA key can't be saved, or null when it can. A Claude key must never reach USDA's URL logs. */
+export function usdaKeyProblem(v: string): string | null {
+  const t = v.trim();
+  if (!t) return null;
+  if (isAnthropicSecret(t)) return CLAUDE_KEY_IN_USDA;
+  if (t === FDC_DEMO_KEY) return "That's the shared demo key — paste your own key";
+  return null;
 }
 
 /** "This month: $0.42 across 7 analyses". */
@@ -138,9 +157,7 @@ export function ClaudeKeySection({ saved, spend }: { saved: string | null; spend
             {result.message}
           </p>
         ) : null}
-        <p className="text-[13px] leading-snug text-muted">
-          Your key stays on this phone — never in backups or in Heft's code. Use a key from a workspace with a monthly spend limit.
-        </p>
+        <p className="text-[13px] leading-snug text-muted">{CLAUDE_KEY_NOTE}</p>
         <ExtLink href={ANTHROPIC_KEYS_URL}>Get a key at console.anthropic.com</ExtLink>
       </div>
       <div className="px-4 py-3 text-[14px] text-muted tabular-nums">{spend ? spendLine(spend) : 'This month: …'}</div>
@@ -151,10 +168,11 @@ export function ClaudeKeySection({ saved, spend }: { saved: string | null; spend
 export function UsdaKeySection({ saved }: { saved: string | null }) {
   const [draft, setDraft] = useState('');
   const trimmed = draft.trim();
+  const problem = usdaKeyProblem(trimmed);
   const save = () => {
     if (!trimmed) return;
-    if (trimmed === FDC_DEMO_KEY) {
-      toast("That's the shared demo key — paste your own key", 'error');
+    if (problem) {
+      toast(problem, 'error');
       return;
     }
     setFdcKey(trimmed);
@@ -183,7 +201,14 @@ export function UsdaKeySection({ saved }: { saved: string | null }) {
             Using USDA's shared demo key — limited to about 10 lookups an hour. Add your free key for database-accurate numbers.
           </p>
         )}
+        {saved && isAnthropicSecret(saved) ? (
+          // Saved before this check existed. It is never sent to USDA (the demo key is used instead).
+          <p role="alert" className="text-[13px] leading-snug text-danger">
+            This is your Claude key, not a USDA key. It isn't sent to USDA — forget it here and paste your USDA key.
+          </p>
+        ) : null}
         <KeyInput value={draft} onChange={setDraft} label="USDA API key" placeholder={saved ? 'Paste a new key to replace it' : 'Your api.data.gov key'} onEnter={save} />
+        {problem === CLAUDE_KEY_IN_USDA ? <p className="text-[13px] leading-snug text-danger">{CLAUDE_KEY_IN_USDA}</p> : null}
         <div className="flex flex-wrap gap-2">
           <Button disabled={!trimmed} onClick={save}>
             Save

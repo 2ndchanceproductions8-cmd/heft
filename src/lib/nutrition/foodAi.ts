@@ -18,11 +18,16 @@ import type { Confidence } from './types';
  *   text block after the last `fallback` block.
  * - The SDK's own retries are off (maxRetries 0): this module decides what to retry, and every BILLED
  *   response (ok or not) is returned in `calls` so the app can show real spend.
+ * - Timeout = the SDK's own non-streaming default (10 min), sized for AI_MAX_TOKENS: a shorter one would cut
+ *   off a long answer client-side, where it can't be priced or retried, before the API could return
+ *   stop_reason 'max_tokens' (which IS billed, recorded and retried once at effort low). A typical meal answers
+ *   in well under a minute; the analyzing screen says the run keeps going if you leave it.
  */
 
 export const AI_MODEL = 'claude-opus-5-5';
 export const AI_MAX_TOKENS = 16000;
-export const AI_TIMEOUT_MS = 180_000;
+/** The SDK's non-streaming default (it allows up to 128k tokens / hour, so 16000 tokens fit in 7.5 min). */
+export const AI_TIMEOUT_MS = 600_000;
 export const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 const MAX_IMAGES = 4;
 const RATE_LIMIT_WAIT_CAP_MS = 20_000;
@@ -142,7 +147,7 @@ export interface AiDeps {
   maxRetries?: number;
   /** Injected in tests so retries don't really wait. */
   sleep?: (ms: number) => Promise<void>;
-  /** Request timeout (default 180 s). */
+  /** Request timeout (default AI_TIMEOUT_MS, 10 min). */
   timeoutMs?: number;
 }
 

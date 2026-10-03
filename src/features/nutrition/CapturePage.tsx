@@ -5,17 +5,19 @@ import { Button, confirm, ListRow, Loading, Page, Spinner, toast, TopBar } from 
 import { deleteMedia } from '../../lib/media';
 import { atForDay, dayKey } from '../../lib/nutrition/math';
 import { PhotoError, saveMealPhoto } from '../../lib/nutrition/photos';
-import { createMeal, deleteMeal, itemFromChoice, updateMeal, useMeal } from '../../lib/nutrition/store';
+import { createMeal, deleteMeal, updateMeal, useMeal } from '../../lib/nutrition/store';
 import { useNutritionKeys } from '../../lib/nutrition/keys';
 import type { FoodChoice, Meal } from '../../lib/nutrition/types';
 import { displayMass, massToG, parseDecimal, type MassUnit } from '../../lib/units';
 import { DetailsPanel, ScaleTip } from './capture/DetailsPanel';
+import { createDraftSaver, type DraftSaver } from './capture/draftSaver';
 import { MAX_PHOTOS, ShotTray } from './capture/ShotTray';
 import { FoodSearchSheet } from './FoodSearchSheet';
+import { keepCapture, logSearchFromCapture, writeDraftText, type DraftText } from './meal/actions';
 import { dayLabel } from './meal/format';
 import { diaryPath, mealPath, scanPath, validDay } from './meal/nav';
-import { HeaderButton } from './meal/parts';
-import { useMassUnit } from './ui';
+import { BackButton, HeaderButton } from './meal/parts';
+import { convertMassText, useMassUnit } from './ui';
 
 /** Grams from the weight field: null when empty, 'invalid' for junk / zero. */
 export function parseWeightField(text: string, mu: MassUnit): number | null | 'invalid' {
@@ -25,15 +27,30 @@ export function parseWeightField(text: string, mu: MassUnit): number | null | 'i
   return Math.round(massToG(v, mu) * 10) / 10;
 }
 
+/** The typed fields as the draft stores them (an invalid weight is stored as none). */
+export function draftText(description: string, weightText: string, mu: MassUnit): DraftText {
+  const w = parseWeightField(weightText, mu);
+  return { description, weightG: w === 'invalid' ? null : w };
+}
+
+/**
+ * The day a capture logs to: `?d=`, else a resumed draft's own day (a draft from yesterday opened from an old
+ * link without `?d=` still logs on yesterday), else null = today.
+ */
+export function captureDay(dayParam: string | null, resumed: Pick<Meal, 'day'> | null, today: string): string | null {
+  if (dayParam) return dayParam;
+  return resumed && resumed.day && resumed.day !== today ? resumed.day : null;
+}
+
 /**
  * /nutrition/log — photograph a meal (up to 4 angles) and/or describe it, then Analyze. The first photo
  * saves a 'draft' meal right away (an iOS kill can't lose it; the Diary lists drafts), `?meal=<id>` resumes
- * one, `?d=<day>` logs on another day. Barcode and database search are the alternatives.
+ * one, `?d=<day>` logs on another day. Barcode and database search are the alternatives. The back chevron
+ * ("Save for later") keeps the draft; "Discard" deletes it.
  */
 export function CapturePage() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
-  const day = validDay(params.get('d'));
   const resumeId = useRef(params.get('meal'));
   const keys = useNutritionKeys();
 
@@ -46,6 +63,16 @@ export function CapturePage() {
   useEffect(() => {
     if (live !== undefined) draftRef.current = live;
   }, [live]);
+  const draftIdRef = useRef(draftId);
+  draftIdRef.current = draftId;
+  const liveRef = useRef(live);
+  liveRef.current = live;
+
+  const today = dayKey(Date.now());
+  const resumed = draft && draft.id === resumeId.current ? draft : null;
+  const day = captureDay(validDay(params.get('d')), resumed, today);
+  const dayRef = useRef(day);
+  dayRef.current = day;
 
   const [description, setDescription] = useState('');
   const [weightText, setWeightText] = useState('');
@@ -54,9 +81,21 @@ export function CapturePage() {
   const [saving, setSaving] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [searching, setSearching] = useState(false);
-  const dirty = useRef(false);
   const latest = useRef({ description, weightText, mu });
   latest.current = { description, weightText, mu };
+  const typedNow = () => draftText(latest.current.description, latest.current.weightText, latest.current.mu);
+  // Typed text → the draft row: 600 ms after the last keystroke, and at once before leaving / on unmount.
+  const saverRef = useRef<DraftSaver | null>(null);
+  if (!saverRef.current) {
+    saverRef.current = createDraftSaver({
+      target: () => {
+        const cur = draftRef.current;
+        return cur && cur.id === draftIdRef.current && cur.status === 'draft' ? { draftId: cur.id, text: typedNow() } : null;
+      },
+      write: writeDraftText,
+    });
+  }
+  const saver = saverRef.current;
 
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
@@ -79,37 +118,45 @@ export function CapturePage() {
       { replace: true },
     );
 
-  // Resuming a draft: bring back what was typed before.
+  // Resuming a draft: bring back what was typed before, and pin its day in the URL (?d=) so the banner, the
+  // exit and any meal created from here stay on that day even if the draft row goes away (last photo removed).
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || !live || live.id !== resumeId.current) return;
     prefilled.current = true;
     if (live.input.description) setDescription(live.input.description);
     if (live.input.weightG) setWeightText(String(displayMass(live.input.weightG, latest.current.mu) ?? ''));
+    const pinned = captureDay(null, live, dayKey(Date.now()));
+    if (pinned) {
+      setParams(
+        (prev) => {
+          if (validDay(prev.get('d'))) return prev;
+          const next = new URLSearchParams(prev);
+          next.set('d', pinned);
+          return next;
+        },
+        { replace: true },
+      );
+    }
+    // setParams is stable enough for a run-once effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live]);
 
   // The unit flipped (toggle, or settings finished loading): convert the typed weight instead of reinterpreting it.
   const prevMu = useRef(mu);
   useEffect(() => {
     if (prevMu.current === mu) return;
-    const v = parseDecimal(latest.current.weightText);
-    if (v != null && v > 0) setWeightText(String(displayMass(massToG(v, prevMu.current), mu) ?? ''));
+    setWeightText(convertMassText(latest.current.weightText, prevMu.current, mu));
     prevMu.current = mu;
   }, [mu]);
 
-  // Keep the draft's description / weight saved too (debounced) — only after the user typed something.
-  useEffect(() => {
-    if (!draftId || !dirty.current) return;
-    const t = window.setTimeout(() => {
-      if (draftRef.current?.id !== draftId || draftRef.current.status !== 'draft') return;
-      const { description: desc, weightText: wt, mu: unit } = latest.current;
-      const w = parseWeightField(wt, unit);
-      void updateMeal(draftId, (m) =>
-        m.status === 'draft' ? { input: { ...m.input, description: desc.trim() || undefined, weightG: w === 'invalid' ? null : w } } : {},
-      ).catch(() => undefined);
-    }, 600);
-    return () => window.clearTimeout(t);
-  }, [description, weightText, mu, draftId]);
+  // Leaving the screen any way at all (tab switch, browser back) still writes the last keystrokes.
+  useEffect(
+    () => () => {
+      void saver.flush();
+    },
+    [saver],
+  );
 
   const addFiles = (files: File[]) => {
     if (!files.length) return;
@@ -136,15 +183,16 @@ export function CapturePage() {
               saved = await updateMeal(cur.id, (m) => (m.photoIds.length >= MAX_PHOTOS ? {} : { photoIds: [...m.photoIds, mediaId] }));
             }
             if (!saved) {
-              // The first photo creates the draft row immediately.
-              const { description: desc, weightText: wt, mu: unit } = latest.current;
-              const w = parseWeightField(wt, unit);
+              // The first photo creates the draft row immediately, with whatever is typed so far.
+              saver.clear();
+              const t = typedNow();
               saved = await createMeal({
                 status: 'draft',
-                input: { kind: 'photo', description: desc.trim() || undefined, weightG: w === 'invalid' ? null : w },
-                at: atForDay(day, Date.now()),
+                input: { kind: 'photo', description: t.description.trim() || undefined, weightG: t.weightG },
+                at: atForDay(dayRef.current, Date.now()),
                 photoIds: [mediaId],
               });
+              draftIdRef.current = saved.id;
               setDraftId(saved.id);
               setDraftParam(saved.id);
             }
@@ -154,6 +202,8 @@ export function CapturePage() {
             }
             draftRef.current = saved;
             setKnown(saved);
+            // Typed while the row was being created: it has somewhere to go now.
+            if (saver.dirty) void saver.flush();
           } catch {
             await deleteMedia([mediaId]).catch(() => undefined);
             toast("Couldn't save the photo", 'error');
@@ -179,10 +229,28 @@ export function CapturePage() {
       try {
         const saved = await updateMeal(cur.id, (m) => ({ photoIds: m.photoIds.filter((x) => x !== mediaId) }));
         await deleteMedia([mediaId]);
-        if (saved && !saved.photoIds.length) {
-          // No photos left: an empty draft would just clutter the Diary.
+        const text = typedNow();
+        const hasText = !!text.description.trim() || !!text.weightG || !!saved?.input.description?.trim() || !!saved?.input.weightG;
+        if (saved && !saved.photoIds.length && hasText) {
+          // Last photo gone but there's typing (a text draft the user saved for later): keep it as a text draft.
+          saver.clear();
+          const kept = await updateMeal(saved.id, (m) => ({
+            input: {
+              ...m.input,
+              kind: 'text',
+              description: text.description.trim() ? text.description : m.input.description,
+              weightG: text.weightG ?? m.input.weightG ?? null,
+            },
+          }));
+          if (kept) {
+            draftRef.current = kept;
+            setKnown(kept);
+          }
+        } else if (saved && !saved.photoIds.length) {
+          // No photos and nothing typed: an empty draft would just clutter the Diary.
           await deleteMeal(saved.id);
           draftRef.current = null;
+          draftIdRef.current = null;
           setKnown(null);
           setDraftId(null);
           setDraftParam(null);
@@ -195,7 +263,9 @@ export function CapturePage() {
       }
     });
 
-  const cancel = async () => {
+  /** Destructive: delete the draft (and its photos) after a confirm, then back to the Diary. */
+  const discard = async () => {
+    if (submitting) return;
     await queue.current;
     const cur = draftRef.current;
     const n = cur?.photoIds.length ?? 0;
@@ -209,6 +279,7 @@ export function CapturePage() {
       });
       if (!ok) return;
     }
+    saver.clear();
     if (cur) {
       try {
         await deleteMeal(cur.id);
@@ -217,7 +288,35 @@ export function CapturePage() {
         return;
       }
     }
-    nav(diaryPath(day), { replace: true });
+    nav(diaryPath(dayRef.current), { replace: true });
+  };
+
+  /**
+   * Keep whatever is here as a draft (see keepCapture) and return its id. Waits for photo saves first. While
+   * a resumed draft is still loading nothing is touched.
+   */
+  const keep = async (): Promise<string | null> => {
+    await queue.current;
+    if (draftIdRef.current && !draftRef.current && liveRef.current === undefined) return null; // still loading
+    saver.clear(); // keepCapture writes the typed text itself
+    return keepCapture({ draft: draftRef.current, text: typedNow(), atIfNew: atForDay(dayRef.current, Date.now()) });
+  };
+
+  // One exit at a time: a double tap on "Save for later" / "Scan" must not create two draft rows.
+  const leaving = useRef(false);
+
+  /** Non-destructive exit ("Save for later" / back): the draft stays in the Diary, on its day. */
+  const exit = async () => {
+    if (submitting || leaving.current) return;
+    leaving.current = true;
+    try {
+      await keep();
+    } catch {
+      leaving.current = false;
+      toast("Couldn't save the meal for later", 'error');
+      return;
+    }
+    nav(diaryPath(dayRef.current), { replace: true });
   };
 
   const analyze = async () => {
@@ -232,6 +331,7 @@ export function CapturePage() {
     try {
       await queue.current;
       const cur = draftRef.current;
+      saver.clear(); // the input is written right here
       let id: string;
       if (cur && cur.photoIds.length) {
         const saved = await updateMeal(cur.id, {
@@ -247,7 +347,7 @@ export function CapturePage() {
           return;
         }
         if (cur) await deleteMeal(cur.id);
-        const m = await createMeal({ status: 'pending', input: { kind: 'text', description: desc, weightG: w }, at: atForDay(day, Date.now()) });
+        const m = await createMeal({ status: 'pending', input: { kind: 'text', description: desc, weightG: w }, at: atForDay(dayRef.current, Date.now()) });
         id = m.id;
       }
       nav(mealPath(id), { replace: true });
@@ -262,19 +362,9 @@ export function CapturePage() {
     setSubmitting(true);
     try {
       await queue.current;
-      const cur = draftRef.current;
-      const item = itemFromChoice(c, grams);
-      let id: string;
-      if (cur && cur.photoIds.length) {
-        // The photos already taken stay as this meal's picture.
-        const saved = await updateMeal(cur.id, { status: 'done', input: { kind: 'search' }, title: c.name, items: [item], error: null });
-        if (!saved) throw new Error('draft vanished');
-        id = saved.id;
-      } else {
-        if (cur) await deleteMeal(cur.id);
-        const m = await createMeal({ status: 'done', input: { kind: 'search' }, title: c.name, items: [item], at: atForDay(day, Date.now()) });
-        id = m.id;
-      }
+      await saver.flush(); // saved first, in case logging the food fails
+      // A draft with photos becomes this meal (its photos shrink to one); otherwise a new meal is logged.
+      const id = await logSearchFromCapture({ draft: draftRef.current, food: c, grams, atIfNew: atForDay(dayRef.current, Date.now()) });
       nav(mealPath(id), { replace: true });
     } catch {
       toast("Couldn't save the food", 'error');
@@ -282,9 +372,19 @@ export function CapturePage() {
     }
   };
 
+  /** The barcode screen, carrying the draft along (?meal=): the scanned product finishes it, photos included. */
   const scanInstead = async () => {
-    await queue.current;
-    nav(scanPath({ d: day }), { replace: true });
+    if (submitting || leaving.current) return;
+    leaving.current = true;
+    let id: string | null;
+    try {
+      id = await keep();
+    } catch {
+      leaving.current = false;
+      toast("Couldn't save the meal", 'error');
+      return;
+    }
+    nav(scanPath({ meal: id, d: dayRef.current }), { replace: true });
   };
 
   if (draft && draft.status !== 'draft') return <Navigate to={mealPath(draft.id)} replace />;
@@ -292,11 +392,28 @@ export function CapturePage() {
   const resuming = !!resumeId.current && draftId === resumeId.current && live === undefined && !known;
   const photoIds = draft?.photoIds ?? [];
   const canAnalyze = (photoIds.length > 0 || description.trim().length > 0) && !saving && !submitting;
-  const today = dayKey(Date.now());
+  const hasContent = !resuming && (photoIds.length > 0 || !!description.trim() || !!weightText.trim());
 
   return (
     <Page>
-      <TopBar title="Log food" left={<HeaderButton onClick={() => void cancel()}>Cancel</HeaderButton>} />
+      <TopBar
+        title="Log food"
+        left={
+          <BackButton
+            label="Back to Food"
+            text={hasContent ? 'Save for later' : undefined}
+            disabled={submitting}
+            onClick={() => void exit()}
+          />
+        }
+        right={
+          hasContent ? (
+            <HeaderButton tone="danger" disabled={submitting} onClick={() => void discard()}>
+              Discard
+            </HeaderButton>
+          ) : null
+        }
+      />
       {resuming ? (
         <Loading />
       ) : (
@@ -319,12 +436,12 @@ export function CapturePage() {
             <DetailsPanel
               description={description}
               onDescription={(v) => {
-                dirty.current = true;
+                saver.typed();
                 setDescription(v);
               }}
               weightText={weightText}
               onWeightText={(v) => {
-                dirty.current = true;
+                saver.typed();
                 setWeightError(null);
                 setWeightText(v);
               }}

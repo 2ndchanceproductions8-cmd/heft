@@ -6,9 +6,9 @@ import { AiError, analyzeMeal, type AiErrorCode, type AnalyzeResult } from './fo
 import { groundItems } from './ground';
 import { ImageLoadError, loadImagesForAi } from './images';
 import { getAnthropicKey } from './keys';
-import { shrinkMealPhotos } from './photos';
-import { updateMeal } from './store';
-import type { AiCall, MealItem } from './types';
+import { finishMealPhotos } from './photos';
+import { recordSpend, updateMeal } from './store';
+import type { AiCall, Meal, MealItem } from './types';
 
 /*
  * The whole photo/text → meal pipeline: status 'analyzing' (force) → Claude (recognition + portion) → USDA
@@ -88,7 +88,8 @@ export interface AnalysisDeps {
   analyzeMeal?: typeof analyzeMeal;
   groundItems?: typeof groundItems;
   loadImages?: typeof loadImagesForAi;
-  shrinkPhotos?: typeof shrinkMealPhotos;
+  /** Default finishMealPhotos (photos.ts), the one shrink path. Injected in tests. */
+  finishPhotos?: typeof finishMealPhotos;
   getApiKey?: () => string | null;
   now?: () => number;
 }
@@ -118,8 +119,16 @@ async function run(mealId: string, deps: AnalysisDeps): Promise<void> {
     return;
   }
 
+  // Writes that carry billed calls: if the meal row vanished meanwhile (restore / delete-all mid-call), the
+  // calls still go to the spend ledger.
+  const withCalls = async (calls: AnalyzeResult['calls'], write: (stamped: AiCall[]) => Promise<Meal | null>) => {
+    const stamped = stampCalls(calls, now());
+    const saved = await write(stamped);
+    if (!saved && stamped.length) await recordSpend(mealId, stamped);
+    return saved;
+  };
   const fail = (error: string, calls: AnalyzeResult['calls'] = []) =>
-    updateMeal(mealId, (m) => ({ status: 'failed', error, aiCalls: [...m.aiCalls, ...stampCalls(calls, now())] }), { force: true });
+    withCalls(calls, (stamped) => updateMeal(mealId, (m) => ({ status: 'failed', error, aiCalls: [...m.aiCalls, ...stamped] }), { force: true }));
 
   // Claude calls that are billed but not yet written to the meal (so an unexpected failure still records them).
   let unrecorded: AnalyzeResult['calls'] = [];
@@ -146,7 +155,9 @@ async function run(mealId: string, deps: AnalysisDeps): Promise<void> {
     } catch (e) {
       if (e instanceof AiError) {
         if (e.code === 'no_key') {
-          await updateMeal(mealId, (m) => ({ status: 'pending', error: NO_KEY_MESSAGE, aiCalls: [...m.aiCalls, ...stampCalls(e.calls, now())] }), { force: true });
+          await withCalls(e.calls, (stamped) =>
+            updateMeal(mealId, (m) => ({ status: 'pending', error: NO_KEY_MESSAGE, aiCalls: [...m.aiCalls, ...stamped] }), { force: true }),
+          );
         } else {
           await fail(aiErrorMessage(e), e.calls);
         }
@@ -168,30 +179,31 @@ async function run(mealId: string, deps: AnalysisDeps): Promise<void> {
       hasUserWeight: weightG != null,
       hasScaleRef: !!result.scaleReference,
     });
-    const at = now();
-    const saved = await updateMeal(
-      mealId,
-      (m) => ({
-        items: grounded.items,
-        confidence,
-        scaleReference: result.scaleReference,
-        notes: result.notes,
-        angles: images.length,
-        aiCalls: [...m.aiCalls, ...stampCalls(result.calls, at)],
-        title: m.title.trim() || titleFromItems(grounded.items),
-        status: 'done',
-        error: null,
-      }),
-      { force: true },
+    const saved = await withCalls(result.calls, (stamped) =>
+      updateMeal(
+        mealId,
+        (m) => ({
+          items: grounded.items,
+          confidence,
+          scaleReference: result.scaleReference,
+          notes: result.notes,
+          angles: images.length,
+          aiCalls: [...m.aiCalls, ...stamped],
+          title: m.title.trim() || titleFromItems(grounded.items),
+          status: 'done',
+          error: null,
+        }),
+        { force: true },
+      ),
     );
     unrecorded = [];
 
-    // Best effort: keep one small photo (JSON backups stay small). The meal is final whatever happens here.
+    // Keep one small photo (JSON backups stay small) through THE shrink path every finished photo meal uses.
+    // finishMealPhotos never throws; the guard is for an injected one, because the meal is final whatever
+    // happens here and must never be marked failed by a thumbnail.
     if (saved && saved.photoIds.length) {
       try {
-        const kept = await (deps.shrinkPhotos ?? shrinkMealPhotos)(saved.photoIds);
-        const same = kept.length === saved.photoIds.length && kept.every((id, i) => id === saved.photoIds[i]);
-        if (!same) await updateMeal(mealId, { photoIds: kept }, { force: true });
+        await (deps.finishPhotos ?? finishMealPhotos)(mealId);
       } catch {
         /* keep the photos as they are */
       }

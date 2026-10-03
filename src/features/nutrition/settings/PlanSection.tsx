@@ -45,7 +45,7 @@ export function ActivitySection({ activity }: { activity: Activity }) {
 export function GoalSection({ goal, pace }: { goal: Goal; pace: Pace }) {
   const offset = calorieAdjustment(goal, pace);
   return (
-    <Card className="mx-4 space-y-3 p-4">
+    <Card className="mx-4 w-auto! space-y-3 p-4">
       <Segmented<Goal>
         value={goal}
         onChange={(g) => void saveProfile({ goal: g }).catch(saveFailed)}

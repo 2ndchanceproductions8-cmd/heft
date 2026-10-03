@@ -23,7 +23,8 @@ export function useMealEditor(meal: Meal) {
   const timer = useRef<number | undefined>(undefined);
 
   const base = saved && saved.id === id && saved.updatedAt > meal.updatedAt ? saved : meal;
-  const view = local ? recomputeMeal({ ...base, ...local }) : base;
+  // Same day rule as store.updateMeal: the day follows the eaten time only when `at` was edited.
+  const view = local ? recomputeMeal({ ...base, ...local }, { rederiveDay: local.at !== undefined && local.at !== base.at }) : base;
   // The newest working copy, also between an edit and its re-render (two quick edits must stack).
   const working = useRef(view);
   working.current = view;
@@ -48,7 +49,7 @@ export function useMealEditor(meal: Meal) {
   const edit = useCallback(
     (fn: (m: Meal) => MealPatch, opts: { now?: boolean } = {}) => {
       const patch = fn(working.current);
-      working.current = recomputeMeal({ ...working.current, ...patch });
+      working.current = recomputeMeal({ ...working.current, ...patch }, { rederiveDay: patch.at !== undefined && patch.at !== working.current.at });
       pending.current = { ...pending.current, ...patch };
       setLocal((prev) => ({ ...prev, ...patch }));
       window.clearTimeout(timer.current);
@@ -73,5 +74,5 @@ export function useMealEditor(meal: Meal) {
     [flush],
   );
 
-  return { view, edit, flush, discard };
+  return { view, edit, flush, discard, working };
 }

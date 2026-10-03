@@ -13,21 +13,24 @@ import type { Meal, MealItem, Targets } from '../../lib/nutrition/types';
 import { DiaryContent, DiaryPage } from './DiaryPage';
 import { NutritionSettingsPage } from './NutritionSettingsPage';
 import { dayLabel, dayQuery, diaryTitle, isDayKey, parseDiaryDay } from './diary/day';
-import { mealHref, MealRowView, rowState } from './diary/MealRow';
+import { mealHref, MealRowView, rowActionLabel, rowState, runRowAction } from './diary/MealRow';
+import { otherDayUnfinished, UNFINISHED_MAX, UnfinishedRowView } from './diary/UnfinishedMeals';
 import { buildQuickAdd, parseQuickAdd } from './diary/QuickAddSheet';
 import { joinFields, TargetsSummary } from './diary/TargetsSummary';
 import { TrainingLine } from './diary/TrainingLine';
 import { bodyweightSource } from './settings/data';
 import { BodySection } from './settings/BodySection';
 import { signedKcal } from './settings/PlanSection';
-import { spendLine } from './settings/KeysSection';
+import { spendLine, UsdaKeySection, usdaKeyProblem } from './settings/KeysSection';
 import { TargetsCard } from './settings/TargetsCard';
 import { DEFAULT_SETTINGS } from '../../lib/settings';
 
 // The analysis engine is another module's job; rows only need "is it running in this session?".
-const engine = vi.hoisted(() => ({ running: new Set<string>() }));
+const engine = vi.hoisted(() => ({ running: new Set<string>(), runs: [] as string[] }));
 vi.mock('../../lib/nutrition/analyze', () => ({
-  runAnalysis: async () => {},
+  runAnalysis: async (id: string) => {
+    engine.runs.push(id);
+  },
   isAnalysisRunning: (id: string) => engine.running.has(id),
   analysisInterrupted: (m: { id: string; status: string }) => m.status === 'analyzing' && !engine.running.has(m.id),
   useAnalysisRunning: (id: string | null | undefined) => (id ? engine.running.has(id) : false),
@@ -90,7 +93,10 @@ const noop = () => {};
 const content = (props: Partial<Parameters<typeof DiaryContent>[0]>) =>
   render(h(DiaryContent, { meals: [], targets: { targets: TARGETS, missing: [] }, burn: { activeKcal: 0, workouts: 0 }, onLog: noop, onSettings: noop, ...props }));
 
-beforeEach(() => engine.running.clear());
+beforeEach(() => {
+  engine.running.clear();
+  engine.runs.length = 0;
+});
 
 describe('diary day helpers', () => {
   const today = '2026-10-03';
@@ -182,8 +188,37 @@ describe('Diary renders', () => {
     const html = content({ meals: [d] });
     expect(html).toContain('Untitled meal');
     expect(html).toContain('Unfinished — tap to continue');
-    expect(mealHref(d)).toBe('/nutrition/log?meal=meal_d');
-    expect(mealHref(meal())).toBe('/nutrition/meal/meal_1');
+    expect(mealHref(d, '2026-10-03')).toBe('/nutrition/log?meal=meal_d');
+    expect(mealHref(meal(), '2026-10-03')).toBe('/nutrition/meal/meal_1');
+  });
+
+  it('U9: a draft from another day resumes with &d= so it keeps logging on that day', () => {
+    const past = meal({ id: 'meal_d', status: 'draft', at: new Date(2026, 9, 1, 19, 0).getTime(), day: '' });
+    expect(past.day).toBe('2026-10-01');
+    expect(mealHref(past, '2026-10-03')).toBe('/nutrition/log?meal=meal_d&d=2026-10-01');
+    // Non-drafts open the meal page whatever their day.
+    expect(mealHref({ ...past, status: 'failed' }, '2026-10-03')).toBe('/nutrition/meal/meal_d');
+  });
+
+  it('U5: Retry starts the analysis when a Claude key is saved, then opens the meal; without a key it only opens it', () => {
+    const failed = meal({ id: 'meal_f', status: 'failed', error: 'x' });
+    const went: string[] = [];
+    runRowAction(failed, 'failed', (to) => went.push(to), { hasKey: true });
+    expect(engine.runs).toEqual(['meal_f']);
+    expect(went).toEqual(['/nutrition/meal/meal_f']);
+
+    runRowAction(failed, 'failed', (to) => went.push(to), { hasKey: false });
+    expect(engine.runs).toEqual(['meal_f']); // no second run
+    expect(went).toEqual(['/nutrition/meal/meal_f', '/nutrition/meal/meal_f']);
+
+    // Analyze (pending) never starts a run from the Diary: the meal page does, once, when a key is saved.
+    runRowAction(meal({ id: 'meal_p', status: 'pending' }), 'pending', (to) => went.push(to), { hasKey: true });
+    expect(engine.runs).toEqual(['meal_f']);
+    expect(went[2]).toBe('/nutrition/meal/meal_p');
+    expect(rowActionLabel('failed')).toBe('Retry');
+    expect(rowActionLabel('pending')).toBe('Analyze');
+    expect(rowActionLabel('draft')).toBe('Continue');
+    expect(rowActionLabel('done')).toBeNull();
   });
 
   it('over target shows the danger "over" text', () => {
@@ -200,13 +235,61 @@ describe('Diary renders', () => {
   });
 
   it('workout burn is display-only', () => {
-    const html = render(h(TrainingLine, { burn: { activeKcal: 312, workouts: 1 }, onSettings: noop }));
+    const html = render(h(TrainingLine, { burn: { activeKcal: 312, workouts: 1 }, hasTarget: true, onSettings: noop }));
     expect(html).toContain('Workouts: 312 kcal active · already in your target');
     expect(html).not.toMatch(/\+\s*312/);
-    expect(render(h(TrainingLine, { burn: { activeKcal: 0, workouts: 0 }, onSettings: noop }))).not.toContain('Workouts');
+    expect(render(h(TrainingLine, { burn: { activeKcal: 0, workouts: 0 }, hasTarget: true, onSettings: noop }))).not.toContain('Workouts');
     // Remaining ignores the burn entirely.
     const withBurn = content({ meals: [meal()], burn: { activeKcal: 500, workouts: 1 } });
     expect(withBurn).toContain('aria-label="1,670 kcal left"');
+  });
+
+  it('U8: with no target set, the workout line is just the number (nothing to be "in")', () => {
+    const line = render(h(TrainingLine, { burn: { activeKcal: 312, workouts: 1 }, hasTarget: false, onSettings: noop }));
+    expect(line).toContain('Workouts: 312 kcal active');
+    expect(line).not.toContain('already in your target');
+    // The Diary wires it from the targets: missing body fields → no target → no claim.
+    const noTarget = content({ meals: [], targets: { targets: null, missing: ['sex'] }, burn: { activeKcal: 312, workouts: 1 } });
+    expect(noTarget).toContain('Workouts: 312 kcal active');
+    expect(noTarget).not.toContain('already in your target');
+    expect(content({ meals: [], burn: { activeKcal: 312, workouts: 1 } })).toContain('Workouts: 312 kcal active · already in your target');
+  });
+
+  it('U10: unfinished meals from other days get their own section with Continue / Analyze / Retry', () => {
+    const today = '2026-10-03';
+    const at = (d: number) => new Date(2026, 9, d, 12, 0).getTime();
+    const draft = meal({ id: 'meal_d', status: 'draft', title: '', at: at(2), day: '', input: { kind: 'photo', description: 'leftover curry' }, photoIds: ['m_1'] });
+    const pending = meal({ id: 'meal_p', status: 'pending', title: 'Pasta', at: at(1), day: '' });
+    const failed = meal({ id: 'meal_f', status: 'failed', title: 'Burrito', at: new Date(2026, 8, 29, 12).getTime(), day: '', error: 'x' });
+    const interrupted = meal({ id: 'meal_i', status: 'analyzing', title: 'Soup', at: at(2), day: '' });
+    const html = content({ meals: [], unfinished: [draft, pending, failed, interrupted], today });
+    expect(html).toContain('Unfinished on other days');
+    expect(html).toContain('leftover curry'); // an untitled draft shows what was typed
+    expect(html).toContain('Yesterday · Unfinished');
+    expect(html).toContain('>Continue<');
+    expect(html).toContain('Thu, Oct 1 · Not analyzed');
+    expect(html).toContain('>Analyze<');
+    expect(html).toContain("Tue, Sep 29 · Couldn't analyze");
+    expect((html.match(/>Retry</g) ?? []).length).toBe(2); // failed + interrupted
+    // Nothing unfinished elsewhere: no section.
+    expect(content({ meals: [], unfinished: [], today })).not.toContain('Unfinished on other days');
+    // Still running here: a spinner, no button.
+    engine.running.add('meal_i');
+    const running = render(h(UnfinishedRowView, { meal: interrupted, state: 'analyzing', today, onOpen: noop, onAction: noop }));
+    expect(running).toContain('Analyzing…');
+    expect(running).not.toContain('>Retry<');
+  });
+
+  it('U10: only meals from days other than the one shown, and at most 5 rows', () => {
+    const on = (day: string, id: string, status: Meal['status'] = 'pending') => ({ ...meal({ id, status }), day });
+    const all = [on('2026-10-03', 'a'), on('2026-10-02', 'b'), on('2026-10-01', 'c', 'draft'), on('2026-10-03', 'd', 'failed')];
+    expect(otherDayUnfinished(all, '2026-10-03').map((m) => m.id)).toEqual(['b', 'c']);
+    expect(otherDayUnfinished(all, '2026-10-02').map((m) => m.id)).toEqual(['a', 'c', 'd']);
+    expect(otherDayUnfinished(undefined, '2026-10-03')).toEqual([]);
+    const many = Array.from({ length: UNFINISHED_MAX + 2 }, (_, i) => on('2026-09-01', `m${i}`));
+    const html = content({ meals: [], unfinished: many, today: '2026-10-03' });
+    expect((html.match(/>Analyze</g) ?? []).length).toBe(UNFINISHED_MAX);
+    expect(html).toContain('2 more unfinished meals');
   });
 
   it('row states', () => {
@@ -256,7 +339,11 @@ describe('Food settings renders', () => {
     const html = render(h(NutritionSettingsPage), '/nutrition/settings');
     expect(html).toContain('Food settings');
     expect(html).toContain("Using USDA's shared demo key — limited to about 10 lookups an hour. Add your free key for database-accurate numbers.");
-    expect(html).toContain("Your key stays on this phone — never in backups or in Heft's code. Use a key from a workspace with a monthly spend limit.");
+    // U13: says where the key really is, without claiming isolation.
+    expect(html).toContain(
+      "Your key is stored in this app on this phone — never in backups or in Heft's code. Use a separate key from a spend-limited workspace used only for Heft.",
+    );
+    expect(html).not.toContain('nowhere else');
     expect(html).toContain('href="https://console.anthropic.com/settings/keys"');
     expect(html).toContain('href="https://fdc.nal.usda.gov/api-key-signup.html"');
     expect(html).toContain('rel="noopener"');
@@ -302,6 +389,20 @@ describe('Food settings renders', () => {
     expect(html).toContain(`placeholder="${auto.proteinG}"`); // protein blank = automatic
     const missing = render(h(TargetsCard, { targets: null, auto: null, missing: ['bodyweight'], profile: { kcalOverride: null, proteinOverride: null } }));
     expect(missing).toContain('Add your body weight under Body');
+  });
+
+  it('U11: the USDA field refuses a Claude key (USDA puts its key in the URL) and the demo key', () => {
+    const claude = 'sk-ant-test-not-a-real-key-0000000000';
+    expect(usdaKeyProblem(claude)).toBe("That's your Claude key — paste it in the Claude field.");
+    expect(usdaKeyProblem(`  ${claude} `)).toBe("That's your Claude key — paste it in the Claude field.");
+    expect(usdaKeyProblem('DEMO_KEY')).toBe("That's the shared demo key — paste your own key");
+    expect(usdaKeyProblem('a1B2c3D4e5F6g7H8i9J0')).toBeNull();
+    expect(usdaKeyProblem('')).toBeNull();
+    // A Claude key saved there before this check is flagged (it is never sent: fdcKeyOrDemo skips it).
+    const html = render(h(UsdaKeySection, { saved: claude }));
+    expect(html).toContain('This is your Claude key, not a USDA key.');
+    expect(html).toContain('Forget key');
+    expect(render(h(UsdaKeySection, { saved: 'a1B2c3D4e5F6g7H8i9J0' }))).not.toContain('This is your Claude key');
   });
 
   it('copy helpers', () => {
