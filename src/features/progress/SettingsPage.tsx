@@ -52,7 +52,8 @@ import { useExercises } from '../../lib/ExerciseProvider';
 import { DEFAULT_BODYWEIGHT_KG } from '../../lib/calories';
 import { formatWeight, kgToUnit, parseDecimal, round, unitToKg } from '../../lib/units';
 import { countCachedExerciseImages, precacheExerciseImages } from '../../lib/offline';
-import { downloadBlob, exportBackup, exportCsv, importBackup, parseBackup } from '../../lib/backup';
+import { downloadBlob, exportBackup, exportCsv, importBackup, keepsFoodLog, parseBackup } from '../../lib/backup';
+import { clearNutritionKeys } from '../../lib/nutrition/keys';
 import { flushActiveWorkout, useWorkoutStore } from '../../lib/workoutStore';
 import { uid } from '../../lib/ids';
 import { restOptionLabel, restOptionsWith } from '../../lib/rest';
@@ -638,9 +639,16 @@ function DataSection() {
       const preview = parseBackup(text);
       const d = preview.data;
       const when = preview.exportedAt ? format(preview.exportedAt, 'MMM d, yyyy h:mm a') : 'an unknown date';
+      // A version-1 file predates the Food tab: restoring it replaces the workout side and keeps the food log.
+      const keepFood = keepsFoodLog(preview);
+      const mealsPart = !keepFood && d.meals.length ? `, ${d.meals.length} ${d.meals.length === 1 ? 'meal' : 'meals'}` : '';
       const ok = await confirm({
-        title: 'Replace all data on this device?',
-        message: `Backup from ${when}: ${d.workouts.length} workouts, ${d.routines.length} routines, ${d.measurements.length} measurements, ${d.media.length} photos. Everything currently on this device will be replaced.`,
+        title: keepFood ? 'Replace workout data on this device?' : 'Replace all data on this device?',
+        message: `Backup from ${when}: ${d.workouts.length} workouts, ${d.routines.length} routines, ${d.measurements.length} measurements${mealsPart}, ${d.media.length} photos. ${
+          keepFood
+            ? 'It was made before the Food tab, so your food log on this device is kept. Everything else will be replaced.'
+            : 'Everything currently on this device will be replaced.'
+        }`,
         confirmLabel: 'Replace',
         danger: true,
       });
@@ -652,7 +660,9 @@ function DataSection() {
       const active = await db.active.get('current');
       useWorkoutStore.setState({ active: active?.workout ?? null, hydrated: true });
       toast(
-        `Restored ${counts.workouts} ${counts.workouts === 1 ? 'workout' : 'workouts'}, ${counts.routines} ${counts.routines === 1 ? 'routine' : 'routines'}, ${counts.measurements} ${counts.measurements === 1 ? 'measurement' : 'measurements'}`,
+        `Restored ${counts.workouts} ${counts.workouts === 1 ? 'workout' : 'workouts'}, ${counts.routines} ${counts.routines === 1 ? 'routine' : 'routines'}, ${counts.measurements} ${counts.measurements === 1 ? 'measurement' : 'measurements'}${
+          counts.meals ? `, ${counts.meals} ${counts.meals === 1 ? 'meal' : 'meals'}` : ''
+        }${keepFood ? ' · food log kept' : ''}`,
         'success',
         4000,
       );
@@ -687,7 +697,8 @@ function DataSection() {
   const doDelete = async () => {
     const first = await confirm({
       title: 'Delete all data?',
-      message: 'This erases every workout, routine, custom exercise, measurement, photo and setting on this device.',
+      message:
+        'This erases every workout, routine, custom exercise, measurement, meal, photo and setting on this device, and forgets the Claude and USDA keys saved for the Food tab.',
       confirmLabel: 'Continue',
       danger: true,
     });
@@ -706,6 +717,8 @@ function DataSection() {
       await db.transaction('rw', db.tables, async () => {
         await Promise.all(db.tables.map((t) => t.clear()));
       });
+      // The Food tab's API keys live in localStorage, outside the database: a wiped phone must forget them too.
+      clearNutritionKeys();
       window.location.reload();
     } catch (e) {
       console.error(e);

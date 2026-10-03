@@ -1,0 +1,577 @@
+{
+  "status": 200,
+  "body": {
+    "totalHits": 1020,
+    "foods": [
+      {
+        "fdcId": 174608,
+        "description": "Chicken breast, roll, oven-roasted",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 7.65
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 1.79
+          },
+          {
+            "nutrientNumber": "269",
+            "nutrientName": "Total Sugars",
+            "unitName": "G",
+            "value": 0.43
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 14.6
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 883
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 134
+          },
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 562
+          }
+        ]
+      },
+      {
+        "fdcId": 172963,
+        "description": "Chicken breast, oven-roasted, fat-free, sliced",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 0.39
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 2.17
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 79
+          },
+          {
+            "nutrientNumber": "269",
+            "nutrientName": "Total Sugars",
+            "unitName": "G",
+            "value": 0.1
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 1090
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 16.8
+          },
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 332
+          }
+        ]
+      },
+      {
+        "fdcId": 171075,
+        "description": "Chicken, broilers or fryers, breast, meat and skin, cooked, roasted",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 824
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 197
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 7.78
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 71
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 29.8
+          },
+          {
+            "nutrientNumber": "269",
+            "nutrientName": "Total Sugars",
+            "unitName": "G",
+            "value": 0
+          }
+        ]
+      },
+      {
+        "fdcId": 171477,
+        "description": "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 690
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 3.57
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 165
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 31
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 74
+          },
+          {
+            "nutrientNumber": "269",
+            "nutrientName": "Total Sugars",
+            "unitName": "G",
+            "value": 0
+          }
+        ]
+      },
+      {
+        "fdcId": 2759004,
+        "description": "Lunchmeat, chicken breast, sliced",
+        "dataType": "Foundation",
+        "foodNutrients": []
+      },
+      {
+        "fdcId": 171515,
+        "description": "Chicken breast tenders, breaded, uncooked",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 1.1
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 14.7
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 15.8
+          },
+          {
+            "nutrientNumber": "269",
+            "nutrientName": "Total Sugars",
+            "unitName": "G",
+            "value": 0.37
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 15
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 263
+          },
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 1100
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 536
+          }
+        ]
+      },
+      {
+        "fdcId": 2646170,
+        "description": "Chicken, breast, boneless, skinless, raw",
+        "dataType": "Foundation",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 65.8
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 1.93
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 22.5
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "957",
+            "nutrientName": "Energy (Atwater General Factors)",
+            "unitName": "KCAL",
+            "value": 106
+          },
+          {
+            "nutrientNumber": "958",
+            "nutrientName": "Energy (Atwater Specific Factors)",
+            "unitName": "KCAL",
+            "value": 112
+          }
+        ]
+      },
+      {
+        "fdcId": 2727569,
+        "description": "Chicken, breast, meat and skin, raw",
+        "dataType": "Foundation",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 48.1
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 4.78
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 21.4
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": -0.428
+          },
+          {
+            "nutrientNumber": "957",
+            "nutrientName": "Energy (Atwater General Factors)",
+            "unitName": "KCAL",
+            "value": 127
+          },
+          {
+            "nutrientNumber": "958",
+            "nutrientName": "Energy (Atwater Specific Factors)",
+            "unitName": "KCAL",
+            "value": 133
+          }
+        ]
+      },
+      {
+        "fdcId": 173635,
+        "description": "Chicken, roasting, meat and skin, cooked, roasted",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 933
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 24
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 73
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 13.4
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 223
+          }
+        ]
+      },
+      {
+        "fdcId": 172395,
+        "description": "Chicken, roasting, meat only, cooked, roasted",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 699
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 25
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 75
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 6.63
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 167
+          }
+        ]
+      },
+      {
+        "fdcId": 172396,
+        "description": "Chicken, roasting, giblets, raw",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 531
+          },
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 5.04
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 1.14
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 127
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 18.1
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 77
+          }
+        ]
+      },
+      {
+        "fdcId": 171514,
+        "description": "Chicken breast tenders, breaded, cooked, microwaved",
+        "dataType": "SR Legacy",
+        "foodNutrients": [
+          {
+            "nutrientNumber": "204",
+            "nutrientName": "Total lipid (fat)",
+            "unitName": "G",
+            "value": 12.9
+          },
+          {
+            "nutrientNumber": "269",
+            "nutrientName": "Total Sugars",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "203",
+            "nutrientName": "Protein",
+            "unitName": "G",
+            "value": 16.4
+          },
+          {
+            "nutrientNumber": "291",
+            "nutrientName": "Fiber, total dietary",
+            "unitName": "G",
+            "value": 0
+          },
+          {
+            "nutrientNumber": "307",
+            "nutrientName": "Sodium, Na",
+            "unitName": "MG",
+            "value": 446
+          },
+          {
+            "nutrientNumber": "268",
+            "nutrientName": "Energy",
+            "unitName": "kJ",
+            "value": 1050
+          },
+          {
+            "nutrientNumber": "205",
+            "nutrientName": "Carbohydrate, by difference",
+            "unitName": "G",
+            "value": 17.6
+          },
+          {
+            "nutrientNumber": "208",
+            "nutrientName": "Energy",
+            "unitName": "KCAL",
+            "value": 252
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "code": "4006381333931",
+  "product": {
+    "brands": "Test Kitchen, Example Co",
+    "code": "4006381333931",
+    "product_name": "Chicken noodle soup (hand-written fixture)",
+    "serving_quantity": "245",
+    "serving_quantity_unit": "g",
+    "serving_size": "1 cup (245 g)",
+    "nutriments": {
+      "energy-kj_100g": 167,
+      "proteins_100g": 2.4,
+      "carbohydrates_100g": 3.7,
+      "fat_100g": 0.8,
+      "sugars_100g": "0.4",
+      "salt_100g": 0.9
+    }
+  },
+  "status": 1,
+  "status_verbose": "product found"
+}
