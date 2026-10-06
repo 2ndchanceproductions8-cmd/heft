@@ -3,16 +3,18 @@ import { useLocation } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { format, startOfDay, subMonths, subYears } from 'date-fns';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Camera, ChevronRight, Ruler, Weight } from 'lucide-react';
+import { Camera, ChevronRight, Heart, Ruler, Weight } from 'lucide-react';
 import type { Measurement, Unit } from '../../types';
 import { db } from '../../db';
 import { Button, Card, EmptyState, ListGroup, Loading, Page, SectionHeader, Segmented, TopBar, cx } from '../../components/ui';
 import { useSettings } from '../../lib/settings';
 import { useMediaUrl } from '../../lib/media';
+import { isAppleMobile } from '../../lib/healthImport';
 import { formatNumber, kgToUnit } from '../../lib/units';
 import { formatLength, lengthUnitFor, readPref, relativeDay, writePref, type LengthUnit } from './format';
 import { ChartTip, ProgressCard } from './components/shared';
 import { LENGTH_FIELDS, MeasurementSheet } from './components/MeasurementSheet';
+import { HealthImportCard } from './components/HealthImportCard';
 
 type Range = '3m' | '1y' | 'all';
 const RANGES: readonly Range[] = ['3m', '1y', 'all'];
@@ -29,6 +31,8 @@ export function MeasurementsPage() {
   const entries = useLiveQuery(() => db.measurements.orderBy('date').reverse().toArray(), []); // newest first
   const [editing, setEditing] = useState<{ entry: Measurement | null; key: number } | null>(null);
   const [limit, setLimit] = useState(PAGE);
+  // Shortcuts (the Apple Health bridge) only exists on iPhone / iPad.
+  const [onApple] = useState(isAppleMobile);
 
   const openNew = () => setEditing({ entry: null, key: Date.now() });
   const openEntry = (m: Measurement) => setEditing({ entry: m, key: Date.now() });
@@ -49,6 +53,7 @@ export function MeasurementsPage() {
       ) : (
         <div className="pt-3">
           <div className="space-y-3 px-4">
+            {onApple ? <HealthImportCard unit={unit} /> : null}
             <WeightCard entries={entries} unit={unit} onAdd={openNew} />
             {entries.length > 0 ? <LatestGrid entries={entries} unit={unit} lu={lu} /> : null}
           </div>
@@ -273,8 +278,16 @@ function EntryRow({ m, unit, lu, onClick }: { m: Measurement; unit: Unit; lu: Le
         <span className="mt-0.5 text-[18px] font-bold tabular-nums">{format(m.date, 'd')}</span>
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px] font-semibold">
-          {format(m.date, new Date(m.date).getFullYear() === new Date().getFullYear() ? 'EEEE' : 'EEEE · yyyy')}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[15px] font-semibold">
+            {format(m.date, new Date(m.date).getFullYear() === new Date().getFullYear() ? 'EEEE' : 'EEEE · yyyy')}
+          </span>
+          {m.source === 'health' ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-danger-soft px-1.5 py-0.5 text-[11px] leading-none font-semibold text-danger">
+              <Heart className="h-3 w-3" fill="currentColor" />
+              Apple Health
+            </span>
+          ) : null}
         </span>
         <span className="block truncate text-[13px] text-muted tabular-nums">{summarize(m, unit, lu) || 'Empty entry'}</span>
       </span>

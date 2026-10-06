@@ -6,7 +6,8 @@ import { DEFAULT_BODYWEIGHT_KG } from './calories';
  * Apple Health bridge for the web app. A web page cannot talk to HealthKit, so a finished workout is handed to
  * an Apple Shortcut the user builds once ("Heft to Health"; steps on the Settings → Apple Health page) through
  * the shortcuts:// URL scheme. The Shortcut logs a Traditional Strength Training workout plus an Active Energy
- * sample so the calories count toward the Move ring. One-way: nothing comes back from Health.
+ * sample so the calories count toward the Move ring. The other direction (weigh-ins from Health into
+ * Measurements, via a second "Health to Heft" Shortcut and the clipboard) is lib/healthImport.ts.
  *
  * A future native build (HealthKit) can reuse healthPayload().
  */

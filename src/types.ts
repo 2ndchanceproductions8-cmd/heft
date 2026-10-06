@@ -297,6 +297,14 @@ export interface Measurement {
   neckCm?: number | null;
   photoIds: string[];
   notes?: string;
+  /**
+   * Where the entry came from: 'health' = imported from Apple Health (lib/healthImport.ts, id "hk_<sample ms>"),
+   * 'manual' (or missing, older data) = typed in Heft. Any user edit of a 'health' row makes it 'manual', and an
+   * import never overwrites a manual row.
+   */
+  source?: 'manual' | 'health';
+  /** Imported rows: epoch ms of the Apple Health sample the row was created from (its anchor weigh-in). */
+  healthAt?: number;
 }
 
 export interface Media {
@@ -336,4 +344,12 @@ export interface Settings {
   barKg: number;
   /** The "Heft to Health" Shortcut is set up: show "Send to Apple Health" on workouts. */
   appleHealth: boolean;
+  /**
+   * Apple Health import watermark (epoch ms): the newest sample a "Health to Heft" import brought into Heft (samples
+   * it skipped don't count). Older samples only update the rows they created, so an imported weigh-in the user
+   * deleted is never brought back.
+   */
+  healthImportedThrough?: number | null;
+  /** Epoch ms of the last saved Apple Health import (null = never). */
+  healthImportedAt?: number | null;
 }

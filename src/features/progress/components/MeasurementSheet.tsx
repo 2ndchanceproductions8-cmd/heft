@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { format } from 'date-fns';
-import { ImagePlus, Trash2, X } from 'lucide-react';
+import { Heart, ImagePlus, Trash2, X } from 'lucide-react';
 import type { Measurement, Unit } from '../../../types';
 import { db } from '../../../db';
 import { Button, Field, Sheet, Spinner, TextArea, TextField, confirm, cx, toast } from '../../../components/ui';
 import { deleteMedia, saveImageFile, useMediaUrl } from '../../../lib/media';
 import { updateSettings } from '../../../lib/settings';
+import { editedMeasurement } from '../../../lib/healthImport';
 import { uid } from '../../../lib/ids';
 import { kgToUnit, parseDecimal, round, unitToKg } from '../../../lib/units';
 import { cmToLength, lengthToCm, lengthUnitFor } from '../format';
@@ -179,7 +180,7 @@ export function MeasurementSheet({ open, entry, unit, onClose }: Props) {
       // A field the user didn't touch keeps its stored value exactly (the form shows rounded, converted
       // numbers — re-converting them on every save would make e.g. 80.9 kg drift to 80.92 kg).
       const untouched = (key: FormKey) => !!entry && values[key] === initial[key];
-      const rec: Measurement = {
+      const changes: Pick<Measurement, 'id' | 'date' | 'photoIds'> & Partial<Measurement> = {
         id: entry?.id ?? uid(),
         date,
         bodyweightKg: untouched('weight')
@@ -193,8 +194,11 @@ export function MeasurementSheet({ open, entry, unit, onClose }: Props) {
       };
       for (const f of LENGTH_FIELDS) {
         const v = parsed[f.key];
-        rec[f.key] = untouched(f.key) ? entry![f.key] ?? null : v != null ? lengthToCm(v, lu) : null;
+        changes[f.key] = untouched(f.key) ? entry![f.key] ?? null : v != null ? lengthToCm(v, lu) : null;
       }
+      // Start from the stored row so fields this form doesn't show (source, healthAt, …) survive; an edited
+      // Apple Health row becomes the user's own, so a later import never overwrites it.
+      const rec = editedMeasurement(entry, changes, dirty);
       const newestBefore = await newestWeighIn();
       await db.measurements.put(rec);
       // Photos removed from an existing entry are deleted only once the change is saved.
@@ -271,6 +275,12 @@ export function MeasurementSheet({ open, entry, unit, onClose }: Props) {
         }
       >
         <div className="space-y-5 px-4 pt-1 pb-8">
+          {entry?.source === 'health' ? (
+            <p className="flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2.5 text-[13px] leading-snug text-muted">
+              <Heart className="mt-0.5 h-4 w-4 shrink-0 text-danger" fill="currentColor" />
+              <span>Imported from Apple Health. If you change it, it becomes your own entry and imports leave it alone.</span>
+            </p>
+          ) : null}
           <Field label="Date">
             <TextField
               type="date"

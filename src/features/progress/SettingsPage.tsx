@@ -141,10 +141,11 @@ export function SettingsPage() {
     const kg = unitToKg(parseDecimal(v)!, unit);
     await updateSettings({ bodyweightKg: kg });
     // The newest weigh-in wins for calories, so record this as today's weigh-in when weigh-ins exist
-    // (correcting today's entry rather than adding a second one for the same day).
+    // (correcting today's entry rather than adding a second one for the same day). A corrected Apple Health
+    // entry becomes the user's own ('manual'), so the next import doesn't overwrite it.
     const newest = await newestWeighIn();
     if (newest) {
-      if (isSameDay(newest.date, Date.now())) await db.measurements.update(newest.id, { bodyweightKg: kg });
+      if (isSameDay(newest.date, Date.now())) await db.measurements.update(newest.id, { bodyweightKg: kg, source: 'manual' });
       else await db.measurements.add({ id: uid(), date: Date.now(), bodyweightKg: kg, photoIds: [] });
       toast('Body weight saved and logged in Measurements', 'success');
     } else {
@@ -383,8 +384,8 @@ export function SettingsPage() {
         <ListRow
           icon={icon(<Heart />)}
           title="Apple Health"
-          subtitle="Via the Shortcuts app"
-          right={<Value>{s.appleHealth ? 'On' : 'Set up'}</Value>}
+          subtitle="Send workouts, bring in weigh-ins"
+          right={<Value>{s.appleHealth || s.healthImportedAt ? 'On' : 'Set up'}</Value>}
           chevron
           onClick={() => navigate('/settings/apple-health')}
         />

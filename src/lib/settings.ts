@@ -21,6 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showRpe: false,
   barKg: 20.411656, // 45 lb
   appleHealth: false,
+  healthImportedThrough: null,
+  healthImportedAt: null,
 };
 
 /** Current settings (defaults until the DB answers — never undefined). */

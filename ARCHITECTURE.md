@@ -40,7 +40,8 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
   `WorkoutExercise.routineExerciseId` links a logged exercise to the routine slot it came from (set by
   `startFromRoutine` and routine picks, kept through Replace / variant switches / splits, saved with the
   workout); "Update routine" pairs by it first, so a swapped variant replaces its slot's exercise.
-  `Routine` / `RoutineFolder`, `Measurement`, `Media` (photo blobs), `Settings`.
+  `Routine` / `RoutineFolder`, `Measurement` (`source: 'health'` + `healthAt` = imported from Apple Health, see
+  "Import from Apple Health"), `Media` (photo blobs), `Settings`.
 - `ExerciseType` decides which columns a set has — use `typeFields(type)` from `lib/exerciseMeta.ts`
   (weight/reps/duration/distance + weight sign "+" weighted, "-" assisted).
 - Food (`src/lib/nutrition/types.ts`: `Meal`, `MealItem`, `Food`, `NutritionProfile`) is the one storage exception:
@@ -61,6 +62,7 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 | `lib/calc.ts` | `estimate1RM` (Epley), `setVolumeKg`, `workoutVolumeKg`, `countDoneSets`, `totalReps`, `prKindsFor`, `PR_LABEL`, `prMetric`, `detectPRs`, `computeAllPRs`, `bestsByExercise`, `isRecordSet`, `previousInstanceSets(history, exerciseId, {mode, routineId, occurrence})` (the n-th instance's last session, never merged), `exerciseSessions` (per-workout rows for charts), `repRecords` |
 | `lib/calories.ts` | `estimateCalories({durationSec, bodyweightKg, exercises, getExercise})` (MET method; see doc comment), `DEFAULT_BODYWEIGHT_KG` |
 | `lib/settings.ts` | `useSettings()` (never undefined), `getSettings`, `updateSettings(patch)` (a `bodyweightKg` patch is a manual edit, stamped `bodyweightUpdatedAt`; copying the newest weigh-in into it is ignored), `currentBodyweightKg` / `useBodyweightKg` (profile or newest weigh-in, whichever is newer), `pickBodyweightKg(settings, latest)`, `newestWeighIn()` |
+| `lib/healthImport.ts` | Apple Health → Measurements: `parseHealthText`, `parseHealthDate`, `parseWeightKg`, `parseBodyFatPct`, `planHealthImport`, `applyHealthImport(plan)`, `editedMeasurement(entry, changes, edited)` (THE way to save a user edit of a measurement), `HEALTH_SKIP_LABEL`, `HEALTH_IMPORT_SHORTCUT`, `importShortcutUrl()`, `HEALTH_TEMPLATE_LINES` / `healthTemplateText()`, `localDayKey` |
 | `lib/media.ts` | `saveImageFile(file)` → media id (downscaled JPEG), `deleteMedia`, `useMediaUrl`, `useMediaUrls`, `useExerciseImages(ex)` |
 | `lib/workouts.ts` | `saveWorkout(w)` (derives totals + recomputes PRs), `deleteWorkout`, `recomputeAllPRs`, `deriveWorkout`, `loadTypeLookup`, `useWorkouts()` (newest first), `useWorkout(id)`, `useExerciseWorkouts(exerciseId)` (oldest first), `createRoutineFromWorkout`, `workoutToRoutineExercises`, `defaultWorkoutName` |
 | `lib/routines.ts` | `useRoutines`, `useRoutine`, `useFolders`, `newRoutineSet`, `newRoutineExercise`, `createRoutine`, `saveRoutine`, `deleteRoutine`, `duplicateRoutine`, `createFolder`, `renameFolder`, `deleteFolder`; "Update routine": `planRoutineUpdate(routine, workout, variantSplits?)` → `{exercises, changed, swaps, added}` and `updateRoutineFromWorkout(id, workout, variantSplits?)` (building blocks `pairWorkoutWithRoutine`, `workoutForRoutineUpdate`, `mergeWorkoutIntoRoutine`, `routineExerciseSwaps`, `workoutDiffersFromRoutine`) |
@@ -133,8 +135,61 @@ builds once ("Heft to Health"; guide at `/settings/apple-health`, `features/prog
 typed-in calories pass unchanged), `name`. The Shortcut: Get Dictionary from Input → Log Workout (Traditional
 Strength Training; Date=start, Duration=minutes, Calories=kcal, Distance=0, because blank Distance fails) → Log Health
 Sample (Active Energy=kcal, Date=start) for the Move ring. `Settings.appleHealth` turns on the
-`features/history/SendToHealthButton.tsx` button (iPhone/iPad only); `Workout.healthSentAt` records sends. One-way only.
+`features/history/SendToHealthButton.tsx` button (iPhone/iPad only); `Workout.healthSentAt` records sends.
 A future native build (HealthKit) should reuse `healthPayload()`.
+
+### Import from Apple Health (weigh-ins, `lib/healthImport.ts`)
+The other direction: the owner's Hume Health scale (Body Pod) writes Weight and Body Fat Percentage to Apple Health,
+and a second Shortcut, **"Health to Heft"** (`HEALTH_IMPORT_SHORTCUT`; guide in the second half of
+`/settings/apple-health`, `?to=weigh-ins` scrolls there), brings the latest weigh-in into Measurements. The bridge is
+the **clipboard**: two Find Health Samples actions (Weight, then Body Fat Percentage; sorted by Start Date, latest
+first, limit 1; the guide has the user widen or drop the action's default Start Date filter, and Clear the second
+action's auto-wired input, because added under the first it becomes "Filter Health Samples" over the weight and finds
+no body fat) → a Text action with the template `heft-health` / `weight: …` / `weight date: …` / `body fat: …` /
+`body fat date: …` (`HEALTH_TEMPLATE_LINES`; date bubbles = Start Date, Date Format ISO 8601 with time, which reads the
+same in every region) → Copy to Clipboard. A Shortcut must **never** return by opening a Heft URL: that lands in Safari,
+whose storage is separate from the home-screen app.
+- UI: `features/progress/components/HealthImportCard.tsx` on `/progress/measurements` (only when `isAppleMobile()`).
+  "Get from Health" sets `location.href = importShortcutUrl()` from the tap; "Paste from Health" calls
+  `navigator.clipboard.readText()` as the FIRST statement of its tap handler (iOS rejects a read that starts after an
+  await), then parse → preview sheet (added / updated / skipped / errors) → Save. A refused read opens a TextArea to
+  long-press-paste into. Imported rows carry an "Apple Health" tag in the history list. The preview explains itself:
+  "Heft couldn't read the Shortcut's text" when values were dropped with errors (vs "No weigh-ins in it" when nothing
+  was found), a "Nothing new" message chosen by the newest skip's reason, and a warning when a line came back empty
+  (`missing`, e.g. body fat = the step 3 Filter trap).
+- `parseHealthText(text, {unit, now?})` → `{samples, errors, recognized, missing}` (samples: `{kind: 'weight' |
+  'bodyFat', value: kg | percent, at}`; `missing` = kinds whose line was there but empty). Tolerant:
+  case/space/underscore-insensitive keys, lb/lbs/kg/st (+ "13 st 2 lb")/g or no unit (= the user's), decimal commas,
+  body fat as "18.5%", "18.5" or a bare fraction ≤ 1 (never with a % sign: "1%" is 1 %; a value with a mass unit is
+  rejected), JSON objects/lists, multi-sample lists (repeated keys or values continued under a key). Dates via
+  `parseHealthDate` — an explicit parser (never `Date.parse`) for ISO 8601 (offset or local), "Oct 5, 2026 at 7:02 AM",
+  "10/5/26, 7:02 AM" (month first unless the first number is over 12), day-first, RFC 2822 ("Mon, 05 Oct 2026 07:02:00
+  -0400"), Today / Yesterday, with U+202F / U+00A0 spaces; a numeric offset or "GMT-4" / "UTC" after the time is
+  applied, a zone name alone ("EDT") is local; missing date = now. `recognized` is false without the `heft-health` line
+  and without weight/body-fat keys, so random clipboard text is rejected; the generic keys `fat` / `mass` / `bf`
+  (`WEAK_KEYS`) don't count on their own, so a nutrition label ("Fat: 12 g") is rejected too. Weight 20–400 kg (the
+  error shows the range in the user's unit), body fat 1–75 %, else dropped with an error.
+- `planHealthImport(samples, existing, settings, {reimportAll?})` → `{add, update, skipped: {reason, at}[],
+  importedThrough}`, one LOCAL day at a time: anchor = the day's earliest weight (body fat within 10 min rides along,
+  else the day's earliest body fat; a body-fat-only day makes a body-fat-only row); id `hk_<anchor ms>`,
+  `source: 'health'`, `healthAt`. **Manual wins**: a day with a non-health row that has a body weight is skipped whole
+  (`manual`). An existing imported row is updated only when its values differ (`unchanged` otherwise; a later weigh-in
+  the same day only fills a missing value, `later`). When a time-zone change puts two imported rows on one local day,
+  the row whose anchor matches a sample is refreshed and values are filled only from the same weigh-in. **Deletes
+  stick**: a sample at or before `Settings.healthImportedThrough` never creates a row (`old`) unless `reimportAll` (the
+  preview's "Bring deleted weigh-ins back"); a weight within 10 min of the day's imported row (a body-fat-only row
+  whose fat synced first) joins that row instead, since it is the same weigh-in. `importedThrough` = the newest sample
+  written into a row or already held by one (never a `manual` / `edited` / `later` skip), so a skipped sample never
+  blocks a later legitimate import.
+- `applyHealthImport(plan)`: ONE `rw` transaction on measurements + settings (bulkPut, watermark = max(stored,
+  `plan.importedThrough`), `healthImportedAt` = now; a plan that writes nothing and moves no watermark leaves settings
+  alone). It never writes the profile weight: calories and Food targets already follow the newest weigh-in through
+  `pickBodyweightKg`, and a newer hand-typed profile weight still wins.
+- `Measurement.source` (`'manual' | 'health'`, missing = manual) and `healthAt` are not indexed (no Dexie version
+  bump); they ride in backups unchanged, as do `Settings.healthImportedThrough` / `healthImportedAt`. Any user edit of
+  a health row makes it `'manual'`: `MeasurementSheet` saves through `editedMeasurement(entry, changes, dirty)`
+  (starts from the stored row, so unknown fields survive) and Settings' body-weight edit of today's weigh-in sets
+  `source: 'manual'` too.
 
 ## Food tab (nutrition)
 A port of SnapPlate. Log a meal by **photo or description** (Claude names the foods and estimates grams, USDA
