@@ -72,5 +72,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // src/lib/today.test.ts pins its zone with process.env.TZ, which only takes effect in a child process (one per
+    // file). A worker_thread ignores it (ICU keeps the parent's zone), so keep 'forks' even if `vitest doctor`
+    // suggests 'threads' or 'vmThreads'.
+    pool: 'forks',
   },
 });

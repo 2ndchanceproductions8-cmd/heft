@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet, ScrollRestoration, useLocation } from 'react-router-dom';
-import { Dumbbell, History, Library, ChartColumn, Utensils } from 'lucide-react';
+import { Dumbbell, History, Library, ChartColumn, Utensils, LayoutDashboard } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ExerciseProvider } from '../lib/ExerciseProvider';
 import { DEFAULT_SETTINGS } from '../lib/settings';
@@ -67,6 +67,7 @@ export function RootLayout() {
 }
 
 const TABS = [
+  { to: '/today', label: 'Today', icon: LayoutDashboard, also: [] },
   { to: '/workout', label: 'Workout', icon: Dumbbell, also: ['/routines'] },
   { to: '/nutrition', label: 'Food', icon: Utensils, also: [] },
   { to: '/history', label: 'History', icon: History, also: [] },

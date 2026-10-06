@@ -325,7 +325,7 @@ describe('capture', () => {
     const out = textOf(html);
     expect(out).toContain('Log food');
     // U2: nothing captured yet: a plain back chevron, no destructive Discard.
-    expect(html).toContain('aria-label="Back to Food"');
+    expect(html).toContain('aria-label="Back"');
     expect(out).not.toContain('Discard');
     expect(out).not.toContain('Cancel');
     expect(out).toContain('Take photo');

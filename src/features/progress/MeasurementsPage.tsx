@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { format, startOfDay, subMonths, subYears } from 'date-fns';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -36,6 +36,16 @@ export function MeasurementsPage() {
 
   const openNew = () => setEditing({ entry: null, key: Date.now() });
   const openEntry = (m: Measurement) => setEditing({ entry: m, key: Date.now() });
+
+  // ?add=1 (Today's "Log a weigh-in") opens the new-entry sheet on arrival; the param is dropped so Back and a
+  // reload don't reopen it.
+  const [params, setParams] = useSearchParams();
+  const addParam = params.get('add') === '1';
+  useEffect(() => {
+    if (!addParam) return;
+    setEditing({ entry: null, key: Date.now() });
+    setParams({}, { replace: true });
+  }, [addParam, setParams]);
 
   return (
     <Page tabBar>

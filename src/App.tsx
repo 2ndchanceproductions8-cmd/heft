@@ -14,6 +14,7 @@ import { ExerciseLibraryPage } from './features/exercises/ExerciseLibraryPage';
 import { ExerciseFormPage } from './features/exercises/ExerciseFormPage';
 import { SettingsPage } from './features/progress/SettingsPage';
 import { AppleHealthPage } from './features/progress/AppleHealthPage';
+import { TodayPage } from './features/today/TodayPage';
 import { Loading } from './components/ui';
 import { nutritionFullRoutes, nutritionTabRoutes } from './features/nutrition/routes';
 
@@ -41,13 +42,14 @@ const router = createHashRouter([
     element: <RootLayout />,
     errorElement: <RouteError />,
     children: [
-      { index: true, element: <Navigate to="/workout" replace /> },
+      { index: true, element: <Navigate to="/today" replace /> },
       {
         element: <TabLayout />,
         children: [
           {
             errorElement: <RouteError tabBar />,
             children: [
+              { path: '/today', element: <TodayPage /> },
               { path: '/workout', element: <WorkoutHomePage /> },
               ...nutritionTabRoutes,
               { path: '/routines/:id', element: <RoutineDetailPage /> },
@@ -77,7 +79,7 @@ const router = createHashRouter([
           ...nutritionFullRoutes,
         ],
       },
-      { path: '*', element: <Navigate to="/workout" replace /> },
+      { path: '*', element: <Navigate to="/today" replace /> },
     ],
   },
 ]);

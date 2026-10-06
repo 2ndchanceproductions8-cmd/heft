@@ -15,7 +15,7 @@ import { MAX_PHOTOS, ShotTray } from './capture/ShotTray';
 import { FoodSearchSheet } from './FoodSearchSheet';
 import { keepCapture, logSearchFromCapture, writeDraftText, type DraftText } from './meal/actions';
 import { dayLabel } from './meal/format';
-import { diaryPath, mealPath, scanPath, validDay } from './meal/nav';
+import { diaryPath, historyIdx, mealPath, scanPath, validDay } from './meal/nav';
 import { BackButton, HeaderButton } from './meal/parts';
 import { convertMassText, useMassUnit } from './ui';
 
@@ -263,7 +263,7 @@ export function CapturePage() {
       }
     });
 
-  /** Destructive: delete the draft (and its photos) after a confirm, then back to the Diary. */
+  /** Destructive: delete the draft (and its photos) after a confirm, then back (to the Diary when there's no history). */
   const discard = async () => {
     if (submitting) return;
     await queue.current;
@@ -288,7 +288,9 @@ export function CapturePage() {
         return;
       }
     }
-    nav(diaryPath(dayRef.current), { replace: true });
+    // Nothing is left in the Diary to show: go back where the owner came from.
+    if (historyIdx() > 0) nav(-1);
+    else nav(diaryPath(dayRef.current), { replace: true });
   };
 
   /**
@@ -309,14 +311,17 @@ export function CapturePage() {
   const exit = async () => {
     if (submitting || leaving.current) return;
     leaving.current = true;
+    let id: string | null = null;
     try {
-      await keep();
+      id = await keep();
     } catch {
       leaving.current = false;
       toast("Couldn't save the meal for later", 'error');
       return;
     }
-    nav(diaryPath(dayRef.current), { replace: true });
+    // Nothing was kept: go back where the owner came from (Today or the Diary). A saved draft goes to the Diary so they see where it went.
+    if (!id && historyIdx() > 0) nav(-1);
+    else nav(diaryPath(dayRef.current), { replace: true });
   };
 
   const analyze = async () => {
@@ -400,7 +405,6 @@ export function CapturePage() {
         title="Log food"
         left={
           <BackButton
-            label="Back to Food"
             text={hasContent ? 'Save for later' : undefined}
             disabled={submitting}
             onClick={() => void exit()}

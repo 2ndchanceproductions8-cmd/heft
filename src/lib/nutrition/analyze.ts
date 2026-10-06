@@ -1,5 +1,4 @@
 import { clearBusy, markBusy } from '../busy';
-import { useSyncExternalStore } from 'react';
 import { db } from '../../db';
 import { finalConfidence } from './confidence';
 import { AiError, analyzeMeal, type AiErrorCode, type AnalyzeResult } from './foodAi';
@@ -7,6 +6,7 @@ import { groundItems } from './ground';
 import { ImageLoadError, loadImagesForAi } from './images';
 import { getAnthropicKey } from './keys';
 import { finishMealPhotos } from './photos';
+import { addRunning, deleteRunning, notifyRunning } from './running';
 import { recordSpend, updateMeal } from './store';
 import type { AiCall, Meal, MealItem } from './types';
 
@@ -45,42 +45,10 @@ export function aiErrorMessage(e: Pick<AiError, 'code' | 'message'>): string {
 
 // ------------------------------------------------------------------ in-flight tracking
 
-const running = new Set<string>();
+// Which meals are running lives in running.ts (tiny, so Today can read it without loading this pipeline).
+export { isAnalysisRunning, analysisInterrupted, useAnalysisRunning } from './running';
+
 const inflight = new Map<string, Promise<void>>();
-const listeners = new Set<() => void>();
-
-function emit(): void {
-  for (const l of [...listeners]) l();
-}
-
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
-}
-
-/** True while runAnalysis(mealId) is in flight in THIS app session. */
-export function isAnalysisRunning(mealId: string): boolean {
-  return running.has(mealId);
-}
-
-/**
- * A meal stuck in 'analyzing' with no run in this session was interrupted (iOS killed the app mid-call).
- * Callers show Retry for it instead of a spinner.
- */
-export function analysisInterrupted(meal: { id: string; status: string }): boolean {
-  return meal.status === 'analyzing' && !running.has(meal.id);
-}
-
-/** React hook: re-renders when any analysis starts/finishes; returns isAnalysisRunning(mealId). */
-export function useAnalysisRunning(mealId: string | null | undefined): boolean {
-  return useSyncExternalStore(
-    subscribe,
-    () => (mealId ? running.has(mealId) : false),
-    () => false,
-  );
-}
 
 // ------------------------------------------------------------------ the run
 
@@ -225,17 +193,17 @@ async function run(mealId: string, deps: AnalysisDeps): Promise<void> {
 export function runAnalysis(mealId: string, deps: AnalysisDeps = {}): Promise<void> {
   const cur = inflight.get(mealId);
   if (cur) return cur;
-  running.add(mealId);
+  addRunning(mealId);
   markBusy('analysis:' + mealId); // lib/pwa.tsx won't reload the app under a billed call
   const p = run(mealId, deps)
     .catch(() => undefined)
     .finally(() => {
-      running.delete(mealId);
+      deleteRunning(mealId);
       clearBusy('analysis:' + mealId);
       inflight.delete(mealId);
-      emit();
+      notifyRunning();
     });
   inflight.set(mealId, p);
-  emit();
+  notifyRunning();
   return p;
 }

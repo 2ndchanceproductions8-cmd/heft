@@ -62,6 +62,7 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 | `lib/calc.ts` | `estimate1RM` (Epley), `setVolumeKg`, `workoutVolumeKg`, `countDoneSets`, `totalReps`, `prKindsFor`, `PR_LABEL`, `prMetric`, `detectPRs`, `computeAllPRs`, `bestsByExercise`, `isRecordSet`, `previousInstanceSets(history, exerciseId, {mode, routineId, occurrence})` (the n-th instance's last session, never merged), `exerciseSessions` (per-workout rows for charts), `repRecords` |
 | `lib/calories.ts` | `estimateCalories({durationSec, bodyweightKg, exercises, getExercise})` (MET method; see doc comment), `DEFAULT_BODYWEIGHT_KG` |
 | `lib/settings.ts` | `useSettings()` (never undefined), `getSettings`, `updateSettings(patch)` (a `bodyweightKg` patch is a manual edit, stamped `bodyweightUpdatedAt`; copying the newest weigh-in into it is ignored), `currentBodyweightKg` / `useBodyweightKg` (profile or newest weigh-in, whichever is newer), `pickBodyweightKg(settings, latest)`, `newestWeighIn()` |
+| `lib/today.ts` | the Today dashboard's pure math, by LOCAL day: `lastDays`, `daysBetween`, `dailyWeighIns` (one per day; a typed row beats a Health row, else the earliest), `dailyBodyFat`, `latestBodyFat`, `weightTrend` (gap-aware EMA), `weeklySlope` / `weeklyRateKg`, `goalRateKgPerWeek`, `bodySummary`, `dailyIntake` / `averageIntake`, `dailyTraining`, `unsentWorkouts`, `buildWeek`, `KCAL_PER_KG` |
 | `lib/healthImport.ts` | Apple Health → Measurements: `parseHealthText`, `parseHealthDate`, `parseWeightKg`, `parseBodyFatPct`, `planHealthImport`, `applyHealthImport(plan)`, `editedMeasurement(entry, changes, edited)` (THE way to save a user edit of a measurement), `HEALTH_SKIP_LABEL`, `HEALTH_IMPORT_SHORTCUT`, `importShortcutUrl()`, `HEALTH_TEMPLATE_LINES` / `healthTemplateText()`, `localDayKey` |
 | `lib/media.ts` | `saveImageFile(file)` → media id (downscaled JPEG), `deleteMedia`, `useMediaUrl`, `useMediaUrls`, `useExerciseImages(ex)` |
 | `lib/workouts.ts` | `saveWorkout(w)` (derives totals + recomputes PRs), `deleteWorkout`, `recomputeAllPRs`, `deriveWorkout`, `loadTypeLookup`, `useWorkouts()` (newest first), `useWorkout(id)`, `useExerciseWorkouts(exerciseId)` (oldest first), `createRoutineFromWorkout`, `workoutToRoutineExercises`, `defaultWorkoutName` |
@@ -80,10 +81,11 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 `const name = await prompt({title:'Rename', initial})` (null = cancelled), `toast('Saved','success')` (kinds: info/success/error/pr).
 
 ## Routes (`src/App.tsx`, hash router)
-Tab pages (bottom tab bar + mini workout bar): `/workout` (WorkoutHomePage), `/nutrition` (Food Diary,
+Tab pages (bottom tab bar + mini workout bar): `/today` (TodayPage, the first tab and the LANDING route: `/` and
+unknown paths redirect there; see "Today dashboard"), `/workout` (WorkoutHomePage), `/nutrition` (Food Diary,
 `?d=yyyy-MM-dd` for another day), `/nutrition/settings` (Food settings), `/routines/:id` (RoutineDetailPage),
-`/history`, `/history/:id`, `/exercises`, `/exercises/:id`, `/progress`, `/progress/measurements`, `/settings`,
-`/settings/apple-health`.
+`/history`, `/history/:id`, `/exercises`, `/exercises/:id`, `/progress`, `/progress/measurements` (`?add=1` opens the
+new-entry sheet on arrival, then drops the param), `/settings`, `/settings/apple-health`.
 Full-screen: `/workout/active`, `/workout/finish`, `/routines/new` (optional `?folder=<id>`),
 `/routines/:id/edit`, `/history/:id/edit`, `/exercises/new` (optional `?variantOf=<id>`), `/exercises/:id/edit`,
 `/nutrition/log`, `/nutrition/meal/:id`, `/nutrition/scan` (query params under "Food tab").
@@ -149,7 +151,10 @@ no body fat) → a Text action with the template `heft-health` / `weight: …` /
 `body fat date: …` (`HEALTH_TEMPLATE_LINES`; date bubbles = Start Date, Date Format ISO 8601 with time, which reads the
 same in every region) → Copy to Clipboard. A Shortcut must **never** return by opening a Heft URL: that lands in Safari,
 whose storage is separate from the home-screen app.
-- UI: `features/progress/components/HealthImportCard.tsx` on `/progress/measurements` (only when `isAppleMobile()`).
+- UI: the flow lives in ONE hook, `features/progress/components/useHealthImport.tsx` (`useHealthImport(unit)` → handlers,
+  status flags and the paste/preview `sheet` node; it marks `lib/busy.ts` while the Shortcut is open so a waiting app
+  update can't reload Heft behind it). Two places use it: `HealthImportCard.tsx` on `/progress/measurements` and the
+  Hume row on Today's Body card (both only when `isAppleMobile()`); bind its handlers straight to `onClick`.
   "Get from Health" sets `location.href = importShortcutUrl()` from the tap; "Paste from Health" calls
   `navigator.clipboard.readText()` as the FIRST statement of its tap handler (iOS rejects a read that starts after an
   await), then parse → preview sheet (added / updated / skipped / errors) → Save. A refused read opens a TextArea to
@@ -336,9 +341,33 @@ is used instead when the browser has one.
 | `foodAi.ts` | `analyzeMeal(input, deps)` → `AnalyzeResult` (items, confidence, scaleReference, notes, billed `calls`) or throws `AiError` with a `code`; `testApiKey(key)` (spends no tokens); pricing `PRICES`, `priceFor`, `costUsd`, `billedCall`; `AI_MODEL` |
 | `ground.ts` | `groundItems(aiItems, opts)` → meal items with USDA numbers or labelled estimates (4 at a time, 6 s per item) |
 | `confidence.ts` | `finalConfidence({model, items, hasUserWeight, hasScaleRef})`, `allItemsMatched` |
-| `analyze.ts` | `runAnalysis(mealId)`, `useAnalysisRunning(id)`, `isAnalysisRunning`, `analysisInterrupted(meal)`, `aiErrorMessage`, `titleFromItems`, `NO_KEY_MESSAGE` |
+| `analyze.ts` | `runAnalysis(mealId)`, `aiErrorMessage`, `titleFromItems`, `NO_KEY_MESSAGE`; re-exports the run registry below |
+| `running.ts` | the dependency-free run registry: `isAnalysisRunning`, `analysisInterrupted(meal)`, `useAnalysisRunning(id)`, `subscribeRunning` (Today reads it without loading the analysis pipeline) |
 
 Feature-side shared pieces: `features/nutrition/ui.tsx` (`Ring`, `MacroBar`, `MacroLine`, `SourceChip`,
 `ConfidenceBadge`, `formatKcal`, `useMassUnit`, and `GramsSheet`, the one gram-entry sheet) and
 `FoodSearchSheet.tsx` (`<FoodSearchSheet open onClose mode="add" | "change" initialQuery? title? onPick={(choice,
 grams | null) => …} />`; `add` asks for grams, `change` returns the food at once).
+
+## Today dashboard (`/today`, `features/today/*`)
+The owner runs Heft, its Food tab (the old SnapPlate) and a **Hume Health Body Pod** scale as one ecosystem; Today puts
+them on one screen, each card one tap from its own tab. `TodayPage` renders four cards, each in its own
+`CardBoundary` (a card that throws shows a Retry box; the others keep working). It is Recharts-free (plain SVG/HTML) and
+imported eagerly, because it is the landing page. `today` = `useTodayKey()` (rolls over at midnight / app wake), `now`
+moves on wake. Live reads: `features/today/data.ts` (`useMeasurements`, `useMealsInDays`) plus the existing hooks. Every
+card exports a pure `…View` for the server-render tests (`features/today/*.render.test.ts`).
+- **Body** (`BodyCard`, `body/*`): the latest weigh-in (`dailyWeighIns`, same manual-wins rule as the Health import), the
+  pace pill (`weeklyRateKg`, 28-day least squares; green only when it agrees with the goal pace `goalRateKgPerWeek` from
+  the final targets), trend weight (EMA, 10 %/day), body fat with its 4-week change (needs readings across 21+ days), a
+  30-day chart, a stale nudge after 7 days, and on iPhone the Hume row (`useHealthImport`: Get from Health / Paste).
+- **Food** (`FuelCard`, `fuel/*`): today's ring and macros, the same numbers as the Diary (only `done` meals count; budget =
+  `remaining(target, eaten)`, burn never added), today's unfinished meals (an analysis cut off by iOS reads "needs a
+  retry", via `lib/nutrition/running.ts`), Snap a meal / Scan.
+- **Training** (`TrainingCard`, `training/*`): a running workout (Resume), today's workouts (or the last one), this week vs
+  last week and the streak (the same `weeklyBuckets` / `weekStreak` as Progress), the Apple Health "not sent" nudge
+  (iPhone + `Settings.appleHealth`), Start empty workout / Routines.
+- **Last 7 days** (`WeekCard`, `week/*`): `buildWeek` lines up three lanes by day: weight dots + trend line, food bars
+  vs the target (a day with nothing logged gets NO bar, never 0 kcal; today's bar is striped), training. Then the average
+  eaten (logged days, today excluded), the weekly rate vs goal, and the workouts. Tapping a day opens its sheet.
+- Settings note: `useSettings()` returns defaults while loading, so the cards read the unit from `useTargets().settings`
+  or the settings row and show a fixed-height skeleton until everything they need has loaded.

@@ -447,8 +447,8 @@ export function AppleHealthPage() {
         </Step>
         <Step n={2} title="Get from Health">
           <p>
-            In Heft, open <B>Progress</B> → <B>Measurements</B> and tap <B>Get from Health</B>. The Shortcut runs and
-            copies your weigh-in.
+            In Heft, tap <B>Get from Health</B> on Today's Body card (or in <B>Progress</B> → <B>Measurements</B>).
+            The Shortcut runs and copies your weigh-in.
           </p>
         </Step>
         <Step n={3} title="Come back and paste">
