@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { bmr, bodyFromSettings, calorieAdjustment, computeTargets, DEFAULT_NUTRITION, KG_PER_LB, tdee } from './targets';
+import {
+  ACTIVITY_TRAINING_DAYS,
+  bmr,
+  bodyFromSettings,
+  calorieAdjustment,
+  computeTargets,
+  DEFAULT_NUTRITION,
+  isRecomp,
+  KG_PER_LB,
+  recompAverageOffset,
+  tdee,
+} from './targets';
+import { goalRateKgPerWeek } from '../today';
 import type { Body } from './types';
 
 // SnapPlate's default profile: male, 30, 5'10" (177.8 cm), 170 lb, moderately active.
@@ -66,5 +78,51 @@ describe('bodyFromSettings', () => {
     const r = bodyFromSettings({ sex: null, birthYear: null, heightCm: 180 }, null, NOW);
     expect(r.body).toBeNull();
     expect(r.missing).toEqual(['sex', 'birthYear', 'bodyweight']);
+  });
+});
+
+describe('Maintain · Recomp', () => {
+  const RECOMP = { ...DEFAULT_NUTRITION, goal: 'maintain' as const, recomp: true };
+
+  it('training days at maintenance, rest days 400 below, protein 1 g per lb', () => {
+    const train = computeTargets(RECOMP, BODY, { trainingDay: true, trainingDaysPerWeek: 4 });
+    const rest = computeTargets(RECOMP, BODY, { trainingDay: false, trainingDaysPerWeek: 4 });
+    expect(train).toMatchObject({ kcal: 2693, proteinG: 170, tdee: 2693, overridden: false });
+    expect(rest).toMatchObject({ kcal: 2293, proteinG: 170 });
+    // Carbs absorb the difference (protein and fat stay put).
+    expect(train.carbsG - rest.carbsG).toBe(100);
+    expect(train.recomp).toEqual({ trainingDay: true, trainingKcal: 2693, restKcal: 2293, trainingDaysPerWeek: 4, avgKcal: 2521 });
+    expect(rest.recomp?.trainingDay).toBe(false);
+  });
+
+  it('the week average: 4 training days ≈ −171 kcal/day; no day info = a rest day at the activity level\'s typical week', () => {
+    expect(recompAverageOffset(4)).toBeCloseTo(-171.43, 2);
+    expect(recompAverageOffset(7)).toBe(0);
+    expect(recompAverageOffset(12)).toBe(0);
+    expect(recompAverageOffset(-1)).toBe(-400);
+    const t = computeTargets(RECOMP, BODY);
+    expect(t.kcal).toBe(2293);
+    expect(t.recomp?.trainingDaysPerWeek).toBe(ACTIVITY_TRAINING_DAYS.moderate);
+  });
+
+  it('only with Maintain: recomp is ignored for lose / gain, and absent without it', () => {
+    expect(isRecomp({ goal: 'lose', recomp: true })).toBe(false);
+    expect(computeTargets({ ...RECOMP, goal: 'lose' }, BODY, { trainingDay: true }).kcal).toBe(2293);
+    expect(computeTargets({ ...RECOMP, goal: 'lose' }, BODY).recomp).toBeUndefined();
+    expect(computeTargets(DEFAULT_NUTRITION, BODY, { trainingDay: false }).kcal).toBe(2693);
+    expect(computeTargets(DEFAULT_NUTRITION, BODY).recomp).toBeUndefined();
+  });
+
+  it('a hand-set calorie target stays fixed every day (no cycling), protein still recomp', () => {
+    const t = computeTargets({ ...RECOMP, kcalOverride: 2500 }, BODY, { trainingDay: false });
+    expect(t.kcal).toBe(2500);
+    expect(t.recomp).toBeUndefined();
+    expect(t.proteinG).toBe(170);
+  });
+
+  it('weekly pace is built from the average, not today', () => {
+    const rest = computeTargets(RECOMP, BODY, { trainingDay: false, trainingDaysPerWeek: 4 });
+    expect(goalRateKgPerWeek(rest)).toBeCloseTo(((2521 - 2693) * 7) / 7700, 6);
+    expect(goalRateKgPerWeek(computeTargets({ ...DEFAULT_NUTRITION, goal: 'lose' }, BODY))).toBeCloseTo((-400 * 7) / 7700, 6);
   });
 });

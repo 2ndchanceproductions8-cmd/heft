@@ -56,10 +56,10 @@ export type WeekCardViewProps = WeekInput & { unit: Unit };
 
 /** The card with its data in hand (pure: plain props; the live WeekCard reads IndexedDB and renders this). */
 export function WeekCardView(props: WeekCardViewProps) {
-  const { today, meals, workouts, measurements, targets, unit } = props;
+  const { today, meals, workouts, measurements, targets, trainingMarks, runningToday, unit } = props;
   const model = useMemo(
-    () => weekModel({ today, meals, workouts, measurements, targets }),
-    [today, meals, workouts, measurements, targets],
+    () => weekModel({ today, meals, workouts, measurements, targets, trainingMarks, runningToday }),
+    [today, meals, workouts, measurements, targets, trainingMarks, runningToday],
   );
   const navigate = useNavigate();
   const [openDay, setOpenDay] = useState<string | null>(null);
@@ -105,7 +105,7 @@ export function WeekCardView(props: WeekCardViewProps) {
             day={selected}
             today={today}
             unit={unit}
-            targetKcal={model.targetKcal}
+            targetKcal={model.dayTargetKcal[selected.day] ?? model.targetKcal}
             targetProteinG={model.targetProteinG}
             workouts={model.workoutsByDay[selected.day] ?? []}
             onGo={go}
@@ -267,8 +267,8 @@ function WeightLane({ model, unit }: { model: WeekModel; unit: Unit }) {
 
 function FoodLane({ model }: { model: WeekModel }) {
   const { bars, targetPct } = useMemo(
-    () => foodGeometry(model.days, model.targetKcal, model.today),
-    [model.days, model.targetKcal, model.today],
+    () => foodGeometry(model.days, model.targetKcal, model.today, model.recomp ? model.dayTargetKcal : undefined),
+    [model.days, model.targetKcal, model.today, model.recomp, model.dayTargetKcal],
   );
   // With nothing logged the lane is just dashes; a lone target line over them would only be noise.
   const showTarget = model.targetKcal != null && model.loggedDays > 0;
@@ -278,7 +278,14 @@ function FoodLane({ model }: { model: WeekModel }) {
     parts.push(
       <span key="t" className="inline-flex items-center gap-1">
         <span className="inline-block w-3 border-t border-dashed border-muted" />
-        target <span className="font-semibold text-fg">{formatKcal(model.targetKcal)}</span>
+        {model.recomp ? (
+          // Recomp: each day has its own mark (training at maintenance, rest below).
+          'target by day'
+        ) : (
+          <>
+            target <span className="font-semibold text-fg">{formatKcal(model.targetKcal)}</span>
+          </>
+        )}
       </span>,
     );
   }
@@ -341,6 +348,18 @@ function FoodLane({ model }: { model: WeekModel }) {
           style={{ bottom: `${targetPct}%` }}
         />
       ) : null}
+      {showTarget && model.recomp
+        ? bars.map((b, i) =>
+            b.targetPct != null ? (
+              <span
+                key={`t${b.day}`}
+                data-target-mark={b.day}
+                className="absolute w-7 -translate-x-1/2 border-t border-dashed border-muted"
+                style={{ left: `${colPct(i)}%`, bottom: `${b.targetPct}%` }}
+              />
+            ) : null,
+          )
+        : null}
     </Lane>
   );
 }
@@ -420,7 +439,7 @@ function Summary({ model, unit }: { model: WeekModel; unit: Unit }) {
   const todayLogged = model.days[model.days.length - 1]?.intake.logged ?? false;
   const foodLines = [
     avg ? `${avg.days} ${avg.days === 1 ? 'day' : 'days'} logged` : todayLogged ? 'only today so far' : 'nothing logged',
-    model.targetKcal != null ? `target ${formatKcal(model.targetKcal)}` : 'no target set',
+    model.targetKcal != null ? `${model.recomp ? 'avg target' : 'target'} ${formatKcal(model.targetKcal)}` : 'no target set',
   ];
 
   const rate = model.rateKgPerWeek;

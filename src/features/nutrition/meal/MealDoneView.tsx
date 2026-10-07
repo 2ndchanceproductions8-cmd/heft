@@ -259,7 +259,7 @@ export function MealDoneView({ meal }: { meal: Meal }) {
 /** Small ring: the meal's day eaten vs the kcal target ("Today" when it's today). */
 function DayRing({ day }: { day: string }) {
   const totals = useDayTotals(day);
-  const ts = useTargets();
+  const ts = useTargets(day);
   if (!totals || !ts) return null;
   const label = dayLabel(day, dayKey(Date.now()));
   const target = ts.targets?.kcal ?? null;

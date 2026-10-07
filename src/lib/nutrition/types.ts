@@ -153,6 +153,28 @@ export interface NutritionProfile {
   proteinOverride: number | null;
   /** Set once the user has confirmed their targets (hides the setup prompt). */
   setupDoneAt: number | null;
+  /**
+   * Maintain · Recomp (only with goal 'maintain'): build muscle and lose fat together. Training days eat maintenance,
+   * rest days RECOMP_REST_OFFSET below it, protein 1 g/lb (targets.ts). Missing = plain maintenance.
+   */
+  recomp?: boolean;
+  /**
+   * Days the user marked by hand (local yyyy-MM-dd → true training / false rest). Beats the automatic rule (a workout
+   * logged that day, or running today). Pruned to the last RECOMP_MARK_DAYS days on write.
+   */
+  trainingDays?: Record<string, boolean>;
+}
+
+/** Recomp's two daily targets and the week they average to (present only when recomp drives the calories). */
+export interface RecompTargets {
+  /** The day these targets were computed for is a training day. */
+  trainingDay: boolean;
+  trainingKcal: number;
+  restKcal: number;
+  /** Training days a week the average assumes (recent history, else the activity level's typical number). */
+  trainingDaysPerWeek: number;
+  /** Average daily target over such a week: what the weekly pace is built for. */
+  avgKcal: number;
 }
 
 /** Body inputs for BMR. Comes from Heft Settings (sex, birthYear, heightCm) + current bodyweight. */
@@ -173,6 +195,8 @@ export interface Targets {
   tdee: number;
   /** True when kcal or protein came from an override. */
   overridden: boolean;
+  /** Maintain · Recomp without a kcal override: today's kind of day and both targets. */
+  recomp?: RecompTargets;
 }
 
 /** A food you can pick: a USDA search hit, an Open Food Facts product, or a cached Food. */

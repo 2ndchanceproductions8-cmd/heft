@@ -34,7 +34,11 @@ function SettingsScreen({ back }: { back: string | boolean }) {
   const spend = useAiSpend(startOfMonth(now).getTime());
 
   const body = data ? bodyFromSettings(data.settings, data.bodyweightKg, now).body : null;
-  const auto = data && body ? computeTargets({ ...data.profile, kcalOverride: null, proteinOverride: null }, body) : null;
+  // The same day as the live targets (Maintain · Recomp: training or rest today), without the overrides.
+  const recompDay = data?.training
+    ? { trainingDay: data.training.training, trainingDaysPerWeek: data.targets?.recomp?.trainingDaysPerWeek ?? null }
+    : undefined;
+  const auto = data && body ? computeTargets({ ...data.profile, kcalOverride: null, proteinOverride: null }, body, recompDay) : null;
 
   return (
     <Page tabBar>
@@ -52,7 +56,7 @@ function SettingsScreen({ back }: { back: string | boolean }) {
           <ActivitySection activity={data.profile.activity} />
 
           <SectionHeader>Goal</SectionHeader>
-          <GoalSection goal={data.profile.goal} pace={data.profile.pace} />
+          <GoalSection goal={data.profile.goal} pace={data.profile.pace} recomp={data.profile.recomp} />
 
           <SectionHeader>Daily targets</SectionHeader>
           <TargetsCard targets={data.targets} auto={auto} missing={data.missing} profile={data.profile} />

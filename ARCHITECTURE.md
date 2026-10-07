@@ -57,9 +57,10 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 | `lib/exerciseMeta.ts` | `EQUIPMENT_LABEL`, `MUSCLE_LABEL`, `EXERCISE_TYPE_LABEL`, `EXERCISE_TYPE_EXAMPLE`, `SET_TYPE_LABEL`, `SET_TYPE_SHORT`, `setNumberLabels(sets)` (THE set-number rule: W not counted, F/D take a number), `typeFields`, `EQUIPMENT_FILTERS`, `MUSCLE_FILTERS` |
 | `lib/rest.ts` | THE rest-timer vocabulary: `REST_OPTIONS` (Off, 5s … 5:00), `restOptionLabel(sec)` ("Off", "45s", "1:30"), `restSettingLabel(sec, defaultSec)` ("Default (1:30)"), `restOptionsWith(current)` |
 | `lib/useWakeNow.ts` | `useWakeNow()` — Date.now() refreshed when the app returns to the foreground |
-| `lib/exercises.ts` | `CATALOG`, `assetUrl`, `buildExerciseIndex`, `searchExercises(list, query, {equipment, muscle})`, `variantRoot`, `variantFamily`, `renameExercise(id, name)` ('' resets), `createCustomExercise`, `createVariant(base, brand, name?)`, `variantName`, `updateCustomExercise`, `exerciseUsage(id)` / `exerciseInUse(usage)`, `deleteCustomExercise` (archives instead if used in history, a routine, the running workout, or as a variant base), `setExercisePhotos`, `setExerciseRest`, `setExerciseNote`, `setExerciseHidden` |
+| `lib/exercises.ts` | `CATALOG`, `assetUrl`, `buildExerciseIndex`, `searchExercises(list, query, {equipment, muscle})`, `variantRoot`, `variantFamily`, `renameExercise(id, name)` ('' resets), `createCustomExercise`, `createVariant(base, brand, name?)`, `variantName`, `updateCustomExercise`, `exerciseUsage(id)` / `exerciseInUse(usage)`, `deleteCustomExercise` (archives instead if used in history, a routine, the running workout, or as a variant base), `setExercisePhotos`, `setExerciseRest`, `setExerciseNote`, `setExerciseHidden`, `setExercisePerSide` |
 | `lib/ExerciseProvider.tsx` | `useExercises()` → `{ list, byId, get(id) }` (get never returns undefined), `useExercise(id)` |
-| `lib/calc.ts` | `estimate1RM` (Epley), `setVolumeKg`, `workoutVolumeKg`, `countDoneSets`, `totalReps`, `prKindsFor`, `PR_LABEL`, `prMetric`, `detectPRs`, `computeAllPRs`, `bestsByExercise`, `isRecordSet`, `previousInstanceSets(history, exerciseId, {mode, routineId, occurrence})` (the n-th instance's last session, never merged), `exerciseSessions` (per-workout rows for charts), `repRecords` |
+| `lib/calc.ts` | `estimate1RM` (Epley), `setVolumeKg`, `workoutVolumeKg`, `countDoneSets`, `totalReps`, `prKindsFor`, `PR_LABEL`, `prMetric`, `detectPRs`, `computeAllPRs`, `bestsByExercise`, `isRecordSet`, `previousInstanceSets(history, exerciseId, {mode, routineId, occurrence})` (the n-th instance's last session, never merged), `exerciseSessions` (per-workout rows for charts; `sides` = left/right bests), `repRecords`; per-side reads: `isSideSet`, `setLimbs` (THE way to read a set's values: two sides or the set), `setReps` / `setDurationSec` / `setDistanceM`, `limbMetric`, `prMetricSide`, `sideMetricFor`, `sideBalance` (see "Per-side sets") |
+| `lib/sides.ts` | per-side set editing: `SIDES`, `SIDE_LETTER`, `SIDE_LABEL`, `valuesOf`, `hasSideValue`, `betterSide`, `syncSideSet` (the mirror), `splitSet`, `joinSet`, `sidesDiffer`, `patchSide`, `sideOf`, `sideTarget`, `formatSidesLine`, `defaultPerSide(name)` |
 | `lib/calories.ts` | `estimateCalories({durationSec, bodyweightKg, exercises, getExercise})` (MET method; see doc comment), `DEFAULT_BODYWEIGHT_KG` |
 | `lib/settings.ts` | `useSettings()` (never undefined), `getSettings`, `updateSettings(patch)` (a `bodyweightKg` patch is a manual edit, stamped `bodyweightUpdatedAt`; copying the newest weigh-in into it is ignored), `currentBodyweightKg` / `useBodyweightKg` (profile or newest weigh-in, whichever is newer), `pickBodyweightKg(settings, latest)`, `newestWeighIn()` |
 | `lib/today.ts` | the Today dashboard's pure math, by LOCAL day: `lastDays`, `daysBetween`, `dailyWeighIns` (one per day: a typed row beats a Health row, else the day's LATEST reading, so a re-weigh replaces a bad one), `dailyBodyFat`, `latestBodyFat`, `weightTrend` (gap-aware EMA), `weeklySlope` / `weeklyRateKg`, `goalRateKgPerWeek`, `bodySummary`, `dailyIntake` / `averageIntake`, `dailyTraining`, `unsentWorkouts`, `buildWeek`, `KCAL_PER_KG` |
@@ -76,7 +77,7 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 | `components/ExerciseImage.tsx` | `ExerciseThumb` (static thumbnail), `ExerciseAnimation` (looping cross-fade hero) |
 | `components/RouteError.tsx` | `RouteError` route `errorElement` (root, tab pages, full-screen flows; see `App.tsx`) |
 | `lib/pwa.tsx` | `setupPwa()` (called in `main.tsx`): service worker in 'prompt' mode + "new version" toast, stale-chunk reload guard |
-| `components/MuscleMap.tsx` | `MuscleMap({ values?, highlight?: {primary, secondary}, view?, onSelect? })` |
+| `components/MuscleMap.tsx` | `MuscleMap({ values?, highlight?: {primary, secondary}, view?, onSelect?, selected?, figure? })` (`figure` 'male' \| 'female' defaults to `Settings.sex`), `HEAT_STEPS`, `heatOpacity` |
 
 `confirm/prompt/toast` are plain async functions (no hooks): `if (await confirm({title, message, danger:true, confirmLabel:'Delete'}))`,
 `const name = await prompt({title:'Rename', initial})` (null = cancelled), `toast('Saved','success')` (kinds: info/success/error/pr).
@@ -106,6 +107,11 @@ Tab pages must use `<Page tabBar>` so content clears the fixed bottom bars.
 - **MiniWorkoutBar** (workout builder) is rendered by `AppShell` above the tab bar; returns null when no
   workout is active.
 - **MuscleMap** (progress builder) is used by the exercise detail page (highlight mode) and Progress (heat mode).
+  Body artwork: MuscleMap by Melih Colpan (MIT, `THIRD_PARTY_NOTICES.md`), male and female, converted by
+  `scripts/build-body-map.mjs` into the GENERATED `features/progress/bodyFigures.ts` (never hand-edit it).
+  `features/progress/anatomy.ts` turns its layers into one tappable region per muscle (upper-back art split by area:
+  the largest shape per side is `lats`, the rest `upper_back`) and holds the shared lighting (`ALSO_LIT_BY`: glutes
+  also lit by abductors, back-view traps also by upper_back; a region shows its strongest muscle) and `DRAWN_MUSCLES`.
 
 ## Design language (Hevy-inspired, dark-first, native-feeling)
 - Use ONLY the semantic Tailwind colors: `bg-bg`, `bg-surface`, `bg-surface-2`, `bg-surface-3`,
@@ -119,6 +125,42 @@ Tab pages must use `<Page tabBar>` so content clears the fixed bottom bars.
   `bg-success-soft`; the ✓ button fills `bg-success`. Set number badge shows W/F/D colored for set types.
 - Empty/loading states for every list. Destructive actions confirm. Feedback via toast.
 - Mobile-first: test layouts at 375px. No horizontal scroll except intentional chip rows (`no-scrollbar`).
+
+## Per-side sets (left / right, `lib/sides.ts`)
+The owner wants to measure each arm's / leg's strength on single-arm and single-leg work. A **per-side set** is ONE
+set (one badge, one RPE, one ✓, one rest timer, one set in the counts and the muscle map) that carries
+`SetEntry.sides = { left, right }` (each `SideValues`: weight/reps/time/distance; the lifter's own left and right).
+- **`sides` is the source of truth.** The set's top-level values MIRROR its better side (`syncSideSet`, by the type's
+  metric: e1RM, reps (assisted: less help), time, distance), so code that reads a set as one value (routine updates,
+  best-set lines, calories) sees its strongest side. Every write of a side goes through `patchSide` / `splitSet` /
+  `joinSet`, which re-sync the mirror.
+- **Totals add both sides** (`setVolumeKg`, `setReps`, `totalReps`, `exerciseSessions` totals, workout volume).
+  **Records take the better limb** (`setLimbs` + `prMetricSide`; `PRRecord.side`, `RecordEntry.side`, `repRecords`
+  rows name it). Per limb on purpose: before per-side logging a single-arm set "50 lb x 10" meant each arm, so limb
+  vs limb keeps old history comparable and the first per-side workout can't set a fake volume PR.
+- **Which exercises:** `Exercise.perSide`, resolved from `ExerciseOverride.perSide` (`setExercisePerSide`), else
+  `defaultPerSide(catalog name)` (Single Arm/Leg, One Arm, Iso-Lateral / unilateral machines, split squats, lunges,
+  step-ups, pistols, concentration curls, side planks, suitcase carries; 91 catalog exercises), a variant follows its
+  base, a custom exercise is off. Toggles: the logger's exercise menu ("Log Left & Right Separately", converts this
+  instance's sets: a plain value becomes each side's, joining keeps the better side after a confirm when sides differ),
+  the exercise page's Left vs Right card / its settings row, and the custom exercise form's **Sides** switch
+  (`features/exercises/ExerciseForm.tsx`: a new exercise's switch follows `defaultPerSide(name)` until touched, so
+  "Iso-Lateral Row (Hammer Strength)" turns it on; a variant starts from its base; saved as the override only when it
+  differs from what the exercise would get anyway; edit mode loads the override from Dexie, not the provider).
+- **Logger** (`features/workout/SetRow.tsx`): a per-side exercise (or a set that already has `sides`) renders two lines,
+  L and R, each with its own PREVIOUS (`sideOf(prevSet)`; a plain previous set applies to each side), placeholders
+  (`sideTarget`: last session's side, else the plain plan incl. a rep range) and inputs. Plain sets of a per-side
+  exercise (from a routine plan, a previous session, "Add Set") are split lazily on the first side edit or on the
+  tick, so nothing converts sets up front. The tick fills each side (`filledValues`) and needs both
+  ("Enter right reps first"). `targetFromValues` / `setsFromPrevious` carry `target.sides`.
+- **Display:** `formatSidesLine` → "L 50 lb x 10 · R 50 lb x 9" ("L/R 50 lb x 10" when equal) in every set-line
+  formatter; the saved workout's set table shows an L and an R line with their own e1RM; the CSV writes two rows with a
+  `Side` column; PR toasts and the Records tab name the side.
+- **Left vs Right card** (`features/exercises/SideBalanceCard.tsx`, exercise page, shown when the exercise is per-side
+  or has per-side history): `sideBalance(sessions, type)` = the latest session's two sides on `sideMetricFor(type)`
+  (est. 1RM, reps, hold time, distance), the gap % of the stronger side (<5 % Balanced, <10 % Slight gap, else
+  Imbalance), best per side, both sides over time (Recharts), and the per-side switch.
+- Backups carry `sides` / `target.sides` / `perSide` unchanged (no Dexie version bump; nothing indexed).
 
 ## Rules for builders
 - Edit ONLY files you own (listed in your task). Do not modify foundation files (`types.ts`, `db.ts`,
@@ -315,6 +357,28 @@ aggressive, gain +250 / +500), protein 0.8 g/lb (1.0 when losing), fat 0.35 g/lb
 14 g per 1000 kcal. Ported verbatim from SnapPlate including its lb-first rounding. kcal / protein overrides
 replace the computed values; missing body fields return `missing` instead of targets (the Diary prompts setup).
 
+### Maintain · Recomp (body recomposition)
+The owner (≈23 % body fat) wants to build muscle and lose fat together. After weighing a flat ±200 band and
++200/−200 cycling (≈ maintenance over a week, slow fat loss), they chose a **cycling deficit**: `NutritionProfile.recomp`
+(only with goal `maintain`; Food settings → Goal → Maintain → Maintenance | Recomp) makes **training days =
+maintenance** (`RECOMP_TRAINING_OFFSET` 0) and **rest days = maintenance −400** (`RECOMP_REST_OFFSET`), protein 1 g/lb
+(as when losing), fat unchanged, carbs absorb the difference. A kcal override stays fixed every day (no cycling; the
+targets card says so). `Targets.recomp` = `{trainingDay, trainingKcal, restKcal, trainingDaysPerWeek, avgKcal}`.
+- **Training day** (`store.ts trainingDayInfo(day, profile, now)` → `{training, source}`): the user's mark
+  (`NutritionProfile.trainingDays[day]`, `setTrainingDay(day, true | false | null)`, pruned to 60 days) wins; else a
+  workout started that local day (`source: 'logged'`); else, for today, a workout running (`'running'`); else rest.
+  `targets.ts` never imports workouts (the guard test): store.ts decides and passes `{trainingDay}` into
+  `computeTargets(profile, body, day?)`. Workouts only say THAT you trained; their burn is still display-only.
+- **Weekly average** (`recentTrainingDaysPerWeek`): distinct workout days (± marks) over the last 28 days, or since
+  the first workout when that is newer (≥ 7-day window), else `ACTIVITY_TRAINING_DAYS[activity]`.
+  `avgKcal = TDEE + recompAverageOffset(n)` (4 days ≈ −171/day). `goalRateKgPerWeek` uses `avgKcal`, so Today's pace
+  pill and the week card's goal follow the plan's average, not today's kind of day.
+- **Per day:** `loadTargets(now, day)` / `useTargets(day)` (Diary `?d=`, a meal's day, Today = today). The Diary's
+  budget card and Today's Food card show `TrainingDayChip` (`features/nutrition/diary/TrainingDayChip.tsx`: "Training
+  day · maintenance" / "Rest day · −400 kcal", why, one tap flips the day). The Today week card gives each day its own
+  target (`weekModel` `dayTargetKcal`, same rule incl. marks and a running workout): per-column target marks instead
+  of one line, a bar is "over" only against its own day, and the summary reads "avg target".
+
 ### Analysis lifecycle (`analyze.ts runAnalysis(mealId)`)
 Capture → Analyze sets `pending` and opens `/nutrition/meal/:id`, which starts the run when a Claude key is saved
 (without one the meal waits as `pending` and runs once a key is added). The run: `analyzing` (force) → Claude →
@@ -353,8 +417,8 @@ is used instead when the browser has one.
 |---|---|
 | `types.ts` | `Meal`, `MealItem`, `MealInput`, `MealStatus`, `AiCall`, `Food`, `FoodChoice`, `Per100g`, `Totals`, `NutritionProfile`, `Body`, `Targets`, `Confidence`, `NutrientSource`, `LookupStatus`, `Activity`, `Goal`, `Pace` |
 | `math.ts` | pure: `emptyTotals`, `scalePer100g`, `addTotals`, `multiplyTotals`, `clampServes`, `MAX_SERVES`, `itemServing`, `itemNutrients`, `mealTotals`, `recomputeMeal`, `countsTowardDay`, `sumMeals`, `remaining(target, eaten)`, `per100gFromEstimate`, `dayKey`, `dayStart`, `shiftDay`, `atForDay(day, now)`, `kcal`, `macroG` |
-| `targets.ts` | `computeTargets(profile, body)`, `bmr`, `tdee`, `calorieAdjustment`, `bodyFromSettings(settings, kg, now)` (body, or the `missing` fields), `DEFAULT_NUTRITION`, `ACTIVITY_FACTOR` / `ACTIVITY_LABEL` / `ACTIVITY_SUBTITLE`, `GOAL_LABEL`, `PACE_LABEL`, `BODY_FIELD_LABEL`, `KG_PER_LB` |
-| `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)` / `loadAiSpend` / `recordSpend` (the ledger), `useTargets` / `loadTargets`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
+| `targets.ts` | `computeTargets(profile, body, day?)`, `bmr`, `tdee`, `calorieAdjustment`, recomp: `isRecomp`, `recompAdjustment`, `recompAverageOffset`, `RECOMP_TRAINING_OFFSET` / `RECOMP_REST_OFFSET` / `RECOMP_MARK_DAYS`, `ACTIVITY_TRAINING_DAYS`, `bodyFromSettings(settings, kg, now)` (body, or the `missing` fields), `DEFAULT_NUTRITION`, `ACTIVITY_FACTOR` / `ACTIVITY_LABEL` / `ACTIVITY_SUBTITLE`, `GOAL_LABEL`, `PACE_LABEL`, `BODY_FIELD_LABEL`, `KG_PER_LB` |
+| `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)` / `loadAiSpend` / `recordSpend` (the ledger), `useTargets(day?)` / `loadTargets(now, day?)` (`TargetsState.day`, `.training`), recomp: `trainingDayInfo`, `recentTrainingDaysPerWeek`, `setTrainingDay`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
 | `keys.ts` | `getAnthropicKey` / `setAnthropicKey`, `getFdcKey` / `setFdcKey`, `fdcKeyOrDemo`, `FDC_DEMO_KEY`, `isAnthropicSecret`, `clearNutritionKeys`, `maskKey`, `looksLikeAnthropicKey`, `useNutritionKeys()` |
 | `burn.ts` | display-only: `useDayBurn(day)`, `loadDayBurn`, `sumActiveKcal` |
 | `usda.ts` | `searchFoods(query, {pageSize, signal})` → `{status: ok/rate_limited/failed, foods, demoKey}`, `bestMatch(query, signal)`, ranking (`rankFoods`, `scoreCandidate`, `tokens`), `extractPer100g`, `choiceFromFdc`, `timeoutSignal`, `NUTRIENT`, `FDC_DATA_TYPES`, `resetUsdaDataTypeMemo` (tests) |
