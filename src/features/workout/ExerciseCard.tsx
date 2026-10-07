@@ -149,6 +149,12 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
 
   const actions: SheetAction[] = [
     {
+      label: ex.perSide ? 'Log Both Sides Together' : 'Log Left & Right Separately',
+      hint: ex.perSide ? 'One weight and rep count per set' : 'Its own weight and reps for each side, any exercise',
+      icon: <ArrowLeftRight className="h-5 w-5" />,
+      onClick: () => void togglePerSide(),
+    },
+    {
       label: 'Reorder Exercises',
       icon: <ArrowUpDown className="h-5 w-5" />,
       onClick: ctx.openReorder,
@@ -162,12 +168,6 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
       onClick: () => setVariantOpen(true),
     },
     { label: 'Rename Exercise', icon: <Pencil className="h-5 w-5" />, onClick: () => void rename() },
-    {
-      label: ex.perSide ? 'Log Both Sides Together' : 'Log Left & Right Separately',
-      hint: ex.perSide ? 'One value per set' : 'Single-arm / single-leg: compare each side',
-      icon: <ArrowLeftRight className="h-5 w-5" />,
-      onClick: () => void togglePerSide(),
-    },
     we.supersetId
       ? {
           label: 'Remove From Superset',
@@ -258,17 +258,34 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
         />
       </div>
 
-      {/* Rest timer */}
-      {mode === 'active' ? (
+      {/* Rest timer + the left / right switch (every exercise, live and when editing a saved workout) */}
+      <div className="mx-1.5 flex items-center justify-between gap-2">
+        {mode === 'active' ? (
+          <button
+            type="button"
+            onClick={() => setRestOpen(true)}
+            className="flex h-10 min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-[14px] font-medium text-accent active:bg-surface-2"
+          >
+            <Timer className="h-4 w-4 shrink-0" />
+            <span className="truncate">Rest Timer: {restOptionLabel(restSec)}</span>
+          </button>
+        ) : (
+          <span />
+        )}
         <button
           type="button"
-          onClick={() => setRestOpen(true)}
-          className="mx-1.5 flex h-10 items-center gap-1.5 rounded-lg px-1.5 text-[14px] font-medium text-accent active:bg-surface-2"
+          onClick={() => void togglePerSide()}
+          aria-pressed={ex.perSide}
+          aria-label={ex.perSide ? 'Left and right logged separately. Log both sides together' : 'Log left and right separately'}
+          className={cx(
+            'flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-1.5 text-[14px] font-medium active:bg-surface-2',
+            ex.perSide ? 'text-accent' : 'text-muted',
+          )}
         >
-          <Timer className="h-4 w-4" />
-          Rest Timer: {restOptionLabel(restSec)}
+          <ArrowLeftRight className="h-4 w-4" />
+          Left / Right: {ex.perSide ? 'On' : 'Off'}
         </button>
-      ) : null}
+      </div>
 
       {/* Set table */}
       <div className="mt-1 pb-1">

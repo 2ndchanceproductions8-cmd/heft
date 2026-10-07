@@ -141,9 +141,12 @@ set (one badge, one RPE, one ✓, one rest timer, one set in the counts and the 
 - **Which exercises:** `Exercise.perSide`, resolved from `ExerciseOverride.perSide` (`setExercisePerSide`), else
   `defaultPerSide(catalog name)` (Single Arm/Leg, One Arm, Iso-Lateral / unilateral machines, split squats, lunges,
   step-ups, pistols, concentration curls, side planks, suitcase carries; 91 catalog exercises), a variant follows its
-  base, a custom exercise is off. Toggles: the logger's exercise menu ("Log Left & Right Separately", converts this
-  instance's sets: a plain value becomes each side's, joining keeps the better side after a confirm when sides differ),
-  the exercise page's Left vs Right card / its settings row, and the custom exercise form's **Sides** switch
+  base, a custom exercise is off. **Every exercise can be switched** (the owner asked for it in every edit spot):
+  the logger card's "Left / Right: On/Off" button beside the rest timer (live AND editing a saved workout) and the
+  first item of its ⋯ menu (both convert this instance's sets: a plain value becomes each side's, joining keeps the
+  better side after a confirm when sides differ); the routine editor card's L/R pill + first ⋯ item (saved at once
+  as the exercise's setting; routine sets stay plain and apply to each side); the exercise page's ⋯ menu, Left vs
+  Right card and settings row; and the custom exercise form's **Sides** switch
   (`features/exercises/ExerciseForm.tsx`: a new exercise's switch follows `defaultPerSide(name)` until touched, so
   "Iso-Lateral Row (Hammer Strength)" turns it on; a variant starts from its base; saved as the override only when it
   differs from what the exercise would get anyway; edit mode loads the override from Dexie, not the provider).

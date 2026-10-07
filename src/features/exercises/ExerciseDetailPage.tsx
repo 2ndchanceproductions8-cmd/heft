@@ -341,6 +341,12 @@ function ExerciseDetail({ id }: { id: string }) {
   };
 
   const actions: SheetAction[] = [
+    {
+      label: ex.perSide ? 'Log Both Sides Together' : 'Log Left & Right Separately',
+      icon: <ArrowLeftRight className="h-5 w-5" />,
+      hint: ex.perSide ? 'One weight and rep count per set' : 'Its own weight and reps for each side',
+      onClick: () => void setPerSide(!ex.perSide),
+    },
     { label: 'Rename', icon: <Pencil className="h-5 w-5" />, hint: 'Renames it everywhere. Your history is kept.', onClick: () => void promptRename(ex) },
     ...(isRenamed(ex)
       ? [{ label: 'Reset Original Name', icon: <RotateCcw className="h-5 w-5" />, hint: ex.originalName, onClick: () => void resetName(ex) }]

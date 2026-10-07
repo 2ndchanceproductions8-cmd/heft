@@ -1,8 +1,9 @@
 import { memo, useCallback, useMemo, useState } from 'react';
-import { ArrowLeftRight, ArrowUpDown, ChevronDown, Link2, Link2Off, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
-import { ActionSheet, IconButton, cx, prompt, type SheetAction } from '../../components/ui';
+import { ArrowLeftRight, ArrowUpDown, ChevronDown, Link2, Link2Off, MoreHorizontal, Plus, Repeat2, Trash2 } from 'lucide-react';
+import { ActionSheet, IconButton, cx, prompt, toast, type SheetAction } from '../../components/ui';
 import { ExerciseThumb } from '../../components/ExerciseImage';
 import { SET_TYPE_LABEL, typeFields } from '../../lib/exerciseMeta';
+import { setExercisePerSide } from '../../lib/exercises';
 import { distanceUnitForType } from '../../lib/units';
 import type { DistanceUnit, Exercise, RoutineExercise, RoutineSet, SetType, Unit } from '../../types';
 import { AutoTextarea, RestTimerSelect } from './EditorFields';
@@ -94,6 +95,15 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
     onUpdate(reId, (r) => ({ ...r, sets: r.sets.map((s) => (s.type === 'warmup' ? s : { ...s, reps, repsMax })) }));
   };
 
+  // Left / right is the exercise's own setting (saved right away, for every routine and workout): the plan's
+  // weights and reps then apply to each side.
+  const togglePerSide = () => {
+    const next = !exercise.perSide;
+    setExercisePerSide(exercise.id, next)
+      .then(() => toast(next ? `${exercise.name}: left and right logged separately` : `${exercise.name}: both sides together`, 'success'))
+      .catch(() => toast('Could not change the exercise', 'error'));
+  };
+
   const menuSet = setMenuFor ? re.sets.find((s) => s.id === setMenuFor) : undefined;
   const setActions: SheetAction[] = menuSet
     ? [
@@ -118,11 +128,29 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
       <div className="flex items-center gap-3 pl-1">
         <ExerciseThumb exercise={exercise} size={42} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[16px] font-semibold text-accent">{exercise.name}</div>
+          <div className="line-clamp-2 text-[16px] leading-snug font-semibold text-accent">{exercise.name}</div>
           {ss && superset != null ? (
             <div className={cx('text-[12px] font-semibold', ss.text)}>Superset {supersetLetter(superset)}</div>
           ) : null}
+          {exercise.perSide ? <div className="text-[12px] text-muted">Left &amp; right</div> : null}
         </div>
+        <button
+          type="button"
+          onClick={togglePerSide}
+          aria-pressed={exercise.perSide}
+          aria-label={exercise.perSide ? 'Left and right logged separately. Log both sides together' : 'Log left and right separately'}
+          className="flex h-10 shrink-0 items-center"
+        >
+          <span
+            className={cx(
+              'flex h-8 items-center gap-1 rounded-full px-2.5 text-[13px] font-semibold transition-colors',
+              exercise.perSide ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-muted active:bg-surface-3',
+            )}
+          >
+            <ArrowLeftRight className="h-3.5 w-3.5" />
+            L/R
+          </span>
+        </button>
         <IconButton label={`Options for ${exercise.name}`} tone="muted" onClick={() => setMenu(true)}>
           <MoreHorizontal className="h-5 w-5" />
         </IconButton>
@@ -204,7 +232,13 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
         onClose={() => setMenu(false)}
         title={exercise.name}
         actions={[
-          { label: 'Replace Exercise', icon: <ArrowLeftRight className="h-5 w-5" />, onClick: () => onAction(reId, 'replace') },
+          {
+            label: exercise.perSide ? 'Log Both Sides Together' : 'Log Left & Right Separately',
+            hint: exercise.perSide ? 'One weight and rep count per set' : 'Its own weight and reps for each side',
+            icon: <ArrowLeftRight className="h-5 w-5" />,
+            onClick: togglePerSide,
+          },
+          { label: 'Replace Exercise', icon: <Repeat2 className="h-5 w-5" />, onClick: () => onAction(reId, 'replace') },
           re.supersetId
             ? { label: 'Remove From Superset', icon: <Link2Off className="h-5 w-5" />, onClick: () => onAction(reId, 'unsuperset') }
             : {

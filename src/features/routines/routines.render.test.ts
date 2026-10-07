@@ -130,3 +130,33 @@ describe('routines feature renders', () => {
     expect(text(inDataRouter('/routines/r1', '/routines/:id', h(RoutineDetailPage)))).toContain('Routine');
   });
 });
+
+describe('left / right switch in the routine editor', () => {
+  const card = (exerciseId: string) =>
+    inRouter(
+      h(RoutineExerciseCard, {
+        re: { id: 're', exerciseId, restSec: null, supersetId: null, sets: [blankRoutineSet({ weightKg: 20, reps: 10 })] },
+        exercise: index.get(exerciseId),
+        unit: 'lb',
+        distanceUnit: 'mi',
+        defaultRest: 90,
+        exerciseCount: 1,
+        onUpdate: () => {},
+        onAction: () => {},
+      }),
+    );
+
+  it('every exercise has the L/R switch; a two-arm exercise starts off', () => {
+    const html = card('Machine_Triceps_Extension');
+    expect(html).toContain('aria-label="Log left and right separately"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(text(html)).toContain('L/R');
+    expect(text(html)).not.toContain('Left & right');
+  });
+
+  it('a one-sided exercise shows it on, with "Left & right" under the name', () => {
+    const html = card('One-Arm_Dumbbell_Row');
+    expect(html).toContain('aria-pressed="true"');
+    expect(text(html)).toContain('Left & right');
+  });
+});
