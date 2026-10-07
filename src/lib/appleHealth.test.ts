@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Workout } from '../types';
 import { activeCalories, healthPayload, shortcutDate, shortcutUrl, SHORTCUT_NAME } from './appleHealth';
 
@@ -52,5 +52,40 @@ describe('plainSpaces', () => {
     const narrow = String.fromCharCode(0x202f);
     const nbsp = String.fromCharCode(0x00a0);
     expect(plainSpaces(`6:05${narrow}PM${nbsp}x`)).toBe('6:05 PM x');
+  });
+});
+
+import { inSafariTab } from './appleHealth';
+describe('inSafariTab', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const iphone = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 };
+  const withDisplayMode = (standalone: boolean) => ({ matchMedia: () => ({ matches: standalone }) });
+
+  it('is false outside a browser (Node)', () => {
+    expect(inSafariTab()).toBe(false);
+  });
+  it('is true in an iPhone Safari tab, false in the installed app', () => {
+    vi.stubGlobal('navigator', iphone);
+    vi.stubGlobal('window', withDisplayMode(false));
+    expect(inSafariTab()).toBe(true);
+    vi.stubGlobal('window', withDisplayMode(true));
+    expect(inSafariTab()).toBe(false);
+    vi.stubGlobal('navigator', { ...iphone, standalone: true });
+    vi.stubGlobal('window', withDisplayMode(false));
+    expect(inSafariTab()).toBe(false);
+  });
+  it('is false off Apple mobile, and when matchMedia throws', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0)', platform: 'Win32', maxTouchPoints: 0 });
+    vi.stubGlobal('window', withDisplayMode(false));
+    expect(inSafariTab()).toBe(false);
+    vi.stubGlobal('navigator', iphone);
+    vi.stubGlobal('window', {
+      matchMedia: () => {
+        throw new Error('no matchMedia');
+      },
+    });
+    expect(inSafariTab()).toBe(false);
   });
 });

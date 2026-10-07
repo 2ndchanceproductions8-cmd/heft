@@ -21,7 +21,7 @@ import { TrainingLine } from './diary/TrainingLine';
 import { bodyweightSource } from './settings/data';
 import { BodySection } from './settings/BodySection';
 import { signedKcal } from './settings/PlanSection';
-import { spendLine, UsdaKeySection, usdaKeyProblem } from './settings/KeysSection';
+import { GITHUB_KEY_IN_USDA, spendLine, UsdaKeySection, usdaKeyProblem } from './settings/KeysSection';
 import { TargetsCard } from './settings/TargetsCard';
 import { DEFAULT_SETTINGS } from '../../lib/settings';
 
@@ -396,6 +396,11 @@ describe('Food settings renders', () => {
     expect(usdaKeyProblem(claude)).toBe("That's your Claude key — paste it in the Claude field.");
     expect(usdaKeyProblem(`  ${claude} `)).toBe("That's your Claude key — paste it in the Claude field.");
     expect(usdaKeyProblem('DEMO_KEY')).toBe("That's the shared demo key — paste your own key");
+    // ...and the GitHub key for the Hume inbox (often still on the clipboard from Settings → Apple Health).
+    expect(GITHUB_KEY_IN_USDA).toBe("That's your GitHub key — paste it in Settings → Apple Health.");
+    expect(usdaKeyProblem('github_pat_TEST')).toBe(GITHUB_KEY_IN_USDA);
+    expect(usdaKeyProblem('Bearer github_pat_TEST')).toBe(GITHUB_KEY_IN_USDA);
+    expect(usdaKeyProblem(' ghp_TESTTESTTESTTESTTEST ')).toBe(GITHUB_KEY_IN_USDA);
     expect(usdaKeyProblem('a1B2c3D4e5F6g7H8i9J0')).toBeNull();
     expect(usdaKeyProblem('')).toBeNull();
     // A Claude key saved there before this check is flagged (it is never sent: fdcKeyOrDemo skips it).

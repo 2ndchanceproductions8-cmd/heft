@@ -23,10 +23,12 @@ import { formatNumber, kgToUnit } from '../../../lib/units';
 
 /*
  * The "Import from Apple Health" flow (iPhone/iPad only), shared by the Measurements page's HealthImportCard and the
- * Today dashboard's Body card. "Get from Health" runs the user's "Health to Heft" Shortcut, which copies the latest
- * weigh-in as text; back in Heft, "Paste from Health" reads the clipboard, previews what will be added / updated /
- * skipped, and Save writes it (lib/healthImport.ts). When the clipboard can't be read (permission refused, older
- * iOS), the sheet offers a box to long-press-paste into instead.
+ * Today dashboard's Body card. "Get from Health" runs the user's "Health to Heft" Shortcut, which copies the last 30
+ * days of weigh-ins as text; back in Heft, "Paste from Health" reads the clipboard, previews what will be added /
+ * updated / skipped, and Save writes it (lib/healthImport.ts: every weigh-in is its own row, and one deleted in Heft
+ * stays deleted unless the preview's "Bring deleted weigh-ins back" is used). When the clipboard can't be read
+ * (permission refused, older iOS), the sheet offers a box to long-press-paste into instead. The same Shortcut also
+ * syncs automatically through lib/healthInbox.ts; this is the by-hand way.
  *
  * Bind `getFromHealth` and `pasteFromHealth` DIRECTLY to a button's onClick: both must run inside the tap itself
  * (see their comments). Render `sheet` once, next to the buttons.
@@ -42,16 +44,21 @@ const NOT_HEALTH_DATA = `That isn't Heft health data — run the ${HEALTH_IMPORT
 
 type SheetState =
   | { mode: 'paste'; text: string; error?: string }
-  | { mode: 'preview'; text: string; parsed: HealthParseResult; plan: HealthImportPlan; reimportAll: boolean };
+  | {
+      mode: 'preview';
+      text: string;
+      parsed: HealthParseResult;
+      plan: HealthImportPlan;
+      reimportAll: boolean;
+      /** With reimportAll: ids of the rows that bring a deleted weigh-in back. */
+      restored: ReadonlySet<string>;
+    };
 
 /** The "Nothing new" box, by why the newest weigh-in in the paste was skipped. */
 const NOTHING_NEW: Record<HealthSkipReason, string> = {
   unchanged:
-    'Heft already has this weigh-in. Weigh in again, give it a few minutes to reach Apple Health, then run the Shortcut.',
-  later: "Heft keeps the first weigh-in of each day, and that day's is already in. Edit that entry if you want the later one.",
-  old: 'You deleted this weigh-in in Heft. Tap Bring deleted weigh-ins back to restore it.',
-  manual:
-    'You already logged a weigh-in that day, and Heft keeps yours. To use the scale’s reading instead, delete your entry and paste again.',
+    'Heft already has every weigh-in in it. After your next weigh-in, give it a few minutes to reach Apple Health, then run the Shortcut again.',
+  deleted: 'You deleted this weigh-in in Heft. Tap Bring deleted weigh-ins back to restore it.',
   edited: 'You edited this weigh-in in Heft, so Heft keeps your version.',
 };
 
@@ -64,6 +71,8 @@ const MISSING_HINT: Record<HealthKind, string> = {
 };
 
 const dayLabel = (ms: number) => format(ms, new Date(ms).getFullYear() === new Date().getFullYear() ? 'MMM d' : 'MMM d, yyyy');
+/** "Oct 5, 7:02 AM": a day can hold several weigh-ins. */
+const timeLabel = (ms: number) => `${dayLabel(ms)}, ${format(ms, 'h:mm a')}`;
 
 /** "Oct 5 · 184.2 lb · 18.5% body fat" */
 function weighInLabel(m: Pick<Measurement, 'date' | 'bodyweightKg' | 'bodyFatPct'>, unit: Unit): string {
@@ -138,7 +147,14 @@ export function useHealthImport(unit: Unit): HealthImport {
     if (!parsed.recognized) return false;
     const [existing, s] = await Promise.all([db.measurements.toArray(), getSettings()]);
     const plan = planHealthImport(parsed.samples, existing, s, { reimportAll });
-    setSheet({ mode: 'preview', text, parsed, plan, reimportAll });
+    // Which rows only the reimport writes: those bring a deleted weigh-in back.
+    let restored: ReadonlySet<string> = new Set();
+    if (reimportAll) {
+      const usual = planHealthImport(parsed.samples, existing, s);
+      const usualIds = new Set([...usual.add, ...usual.update].map((m) => m.id));
+      restored = new Set([...plan.add, ...plan.update].map((m) => m.id).filter((id) => !usualIds.has(id)));
+    }
+    setSheet({ mode: 'preview', text, parsed, plan, reimportAll, restored });
     return true;
   };
 
@@ -191,7 +207,7 @@ export function useHealthImport(unit: Unit): HealthImport {
     }
     setSaving(true);
     try {
-      // The watermark only covers samples this import actually brought in (plan.importedThrough).
+      // A "Bring deleted weigh-ins back" plan also lifts the tombstones of what it restores (plan.clearDeleted).
       const { added, updated } = await applyHealthImport(sheet.plan);
       const n = added + updated;
       toast(n ? `Imported ${n} weigh-in${n === 1 ? '' : 's'}` : 'Nothing new from Apple Health', n ? 'success' : 'info');
@@ -297,13 +313,16 @@ function Preview({
   onReimport: () => void;
   onGuide: () => void;
 }) {
-  const { plan, parsed } = sheet;
+  const { plan, parsed, restored } = sheet;
   const rows = [
-    ...plan.add.map((m) => ({ m, kind: 'new' as const })),
-    ...plan.update.map((m) => ({ m, kind: 'update' as const })),
+    ...plan.add.map((m) => ({ m, kind: restored.has(m.id) ? ('restore' as const) : ('new' as const) })),
+    ...plan.update.map((m) => ({ m, kind: restored.has(m.id) ? ('restore' as const) : ('update' as const) })),
   ].sort((a, b) => b.m.date - a.m.date);
   const skipped = [...plan.skipped].sort((a, b) => b.at - a.at);
-  const deletedBefore = !sheet.reimportAll && plan.skipped.some((s) => s.reason === 'old');
+  // The Shortcut sends 30 days every time: weigh-ins Heft already has are one line, the others one line each.
+  const unchanged = skipped.filter((s) => s.reason === 'unchanged').length;
+  const listed = skipped.filter((s) => s.reason !== 'unchanged');
+  const deletedBefore = !sheet.reimportAll && plan.skipped.some((s) => s.reason === 'deleted');
   // Explain the newest weigh-in: that's the one the user just made.
   const nothingNew = NOTHING_NEW[skipped[0]?.reason ?? 'unchanged'];
   const missing = parsed.samples.length ? parsed.missing : [];
@@ -349,10 +368,10 @@ function Preview({
                 <span
                   className={cx(
                     'shrink-0 rounded-md px-1.5 py-0.5 text-[12px] font-semibold',
-                    kind === 'new' ? 'bg-success-soft text-success' : 'bg-accent-soft text-accent',
+                    kind === 'new' ? 'bg-success-soft text-success' : kind === 'update' ? 'bg-accent-soft text-accent' : 'bg-warn-soft text-warn',
                   )}
                 >
-                  {kind === 'new' ? 'New' : 'Update'}
+                  {kind === 'new' ? 'New' : kind === 'update' ? 'Update' : 'Restore'}
                 </span>
               </li>
             ))}
@@ -383,11 +402,16 @@ function Preview({
         <section>
           <h3 className="mb-2 text-[13px] font-semibold tracking-wide text-muted uppercase">Skipped</h3>
           <ul className="space-y-1 text-[14px] text-muted">
-            {skipped.map((s, i) => (
-              <li key={s.at + s.reason + i} className="tabular-nums">
-                {dayLabel(s.at)} · {HEALTH_SKIP_LABEL[s.reason]}
+            {listed.map((s, i) => (
+              <li key={s.at + s.reason + i} className="truncate tabular-nums">
+                {timeLabel(s.at)} · {HEALTH_SKIP_LABEL[s.reason]}
               </li>
             ))}
+            {unchanged ? (
+              <li className="tabular-nums">
+                {unchanged === 1 ? '1 weigh-in already in Heft' : `${unchanged} weigh-ins already in Heft`}
+              </li>
+            ) : null}
           </ul>
           {deletedBefore ? (
             <Button variant="ghost" className="mt-1 -ml-4" onClick={onReimport}>

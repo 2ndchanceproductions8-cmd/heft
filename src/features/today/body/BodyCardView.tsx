@@ -24,7 +24,9 @@ import {
 /*
  * Today → Body: where the scale says the owner stands. The latest weigh-in (the Hume Body Pod via Apple Health, or
  * typed in), the smoothed trend and its weekly pace against the calorie target's pace, body fat, and 30 days of
- * weigh-ins. Tapping the card opens Measurements. Pure view: everything arrives as props (BodyCard reads the data).
+ * weigh-ins. Tapping the big number opens the Weigh-ins sheet (every reading of the last two weeks, each one
+ * deletable); the rest of the card opens Measurements. Siblings, never nested: no button inside a link.
+ * Pure view: everything arrives as props (BodyCard reads the data).
  */
 
 export const MEASUREMENTS = '/progress/measurements';
@@ -41,14 +43,26 @@ export interface BodyCardViewProps {
   profileKg: number | null;
   /** goalRateKgPerWeek(targets): the pace the calorie target is built for; null without targets. */
   goalRateKg: number | null;
-  /** The Hume scale row (iPhone / iPad only), rendered under the card's content. */
+  /** The Hume scale row (iPhone / iPad, or anywhere once automatic sync is set up), under the card's content. */
   sync?: ReactNode;
+  /** Opens the Weigh-ins sheet; the big number is its button. Without it the number is plain text. */
+  onShowWeighIns?: () => void;
 }
 
-export function BodyCardView({ today, now, unit, summary, profileKg, goalRateKg, sync }: BodyCardViewProps) {
+export function BodyCardView({ today, now, unit, summary, profileKg, goalRateKg, sync, onShowWeighIns }: BodyCardViewProps) {
   let body: ReactNode;
   if (summary === undefined) body = <BodyLoading />;
-  else if (summary.latest) body = <BodyNormal today={today} now={now} unit={unit} summary={summary} goalRateKg={goalRateKg} />;
+  else if (summary.latest)
+    body = (
+      <BodyNormal
+        today={today}
+        now={now}
+        unit={unit}
+        summary={summary}
+        goalRateKg={goalRateKg}
+        onShowWeighIns={onShowWeighIns}
+      />
+    );
   else body = <BodyEmpty unit={unit} profileKg={profileKg} />;
   return (
     <Card className="overflow-hidden">
@@ -178,12 +192,14 @@ function BodyNormal({
   unit,
   summary,
   goalRateKg,
+  onShowWeighIns,
 }: {
   today: string;
   now: number;
   unit: Unit;
   summary: BodySummary;
   goalRateKg: number | null;
+  onShowWeighIns?: () => void;
 }) {
   const latest = summary.latest!;
   const daysAgo = summary.daysSinceWeighIn ?? 0;
@@ -201,18 +217,40 @@ function BodyNormal({
           ? bodyFatChange(summary.bodyFatRatePerWeek)
           : null;
 
-  return (
-    <Link to={MEASUREMENTS} className="block p-4 transition-colors active:bg-surface-2" data-state="normal">
-      <div className="mb-3">
-        <TitleRow healthTag={latest.source === 'health'} />
+  const when = weighInWhen(latest.at, daysAgo, now);
+  const number = (
+    <>
+      <BigWeight kg={latest.kg} unit={unit} />
+      <div className="mt-1.5 flex min-w-0 items-center gap-0.5 text-[13px] text-muted tabular-nums">
+        <span className="truncate">{when}</span>
+        {onShowWeighIns ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden /> : null}
       </div>
+    </>
+  );
+  const tap = 'transition-colors active:bg-surface-2';
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <BigWeight kg={latest.kg} unit={unit} />
-          <div className="mt-1.5 truncate text-[13px] text-muted tabular-nums">{weighInWhen(latest.at, daysAgo, now)}</div>
-        </div>
-        <div className="flex min-w-0 flex-col items-end text-right">
+  return (
+    <div data-state="normal">
+      <Link to={MEASUREMENTS} className={cx('block px-4 pt-4 pb-2', tap)}>
+        <TitleRow healthTag={latest.source === 'health'} />
+      </Link>
+
+      <div className="flex items-stretch">
+        {onShowWeighIns ? (
+          <button
+            type="button"
+            onClick={onShowWeighIns}
+            aria-haspopup="dialog"
+            className={cx('min-w-0 flex-1 py-1 pr-2 pl-4 text-left', tap)}
+            data-action="weigh-ins"
+          >
+            {number}
+            <span className="sr-only">. Show weigh-ins</span>
+          </button>
+        ) : (
+          <div className="min-w-0 flex-1 py-1 pr-2 pl-4">{number}</div>
+        )}
+        <Link to={MEASUREMENTS} className={cx('flex min-w-0 flex-col items-end py-1 pr-4 pl-2 text-right', tap)}>
           {summary.rateKgPerWeek != null ? (
             <RatePill rateKg={summary.rateKgPerWeek} goalRateKg={goalRateKg} unit={unit} />
           ) : (
@@ -221,30 +259,32 @@ function BodyNormal({
           {goalRateKg != null ? (
             <span className="mt-1.5 text-[12px] text-muted tabular-nums">{formatGoal(goalRateKg, unit)}</span>
           ) : null}
-        </div>
+        </Link>
       </div>
 
-      {nudge ? (
-        <p className="mt-3 flex items-center gap-2 rounded-xl bg-surface-2 px-3 py-2 text-[13px] leading-snug text-muted" data-nudge="stale">
-          <Weight className="h-4 w-4 shrink-0" aria-hidden />
-          <span className="min-w-0">{nudge}</span>
-        </p>
-      ) : null}
+      <Link to={MEASUREMENTS} className={cx('flow-root px-4 pb-4', tap)} data-part="details">
+        {nudge ? (
+          <p className="mt-3 flex items-center gap-2 rounded-xl bg-surface-2 px-3 py-2 text-[13px] leading-snug text-muted" data-nudge="stale">
+            <Weight className="h-4 w-4 shrink-0" aria-hidden />
+            <span className="min-w-0">{nudge}</span>
+          </p>
+        ) : null}
 
-      {showTrend || fat ? (
-        <div className={cx('mt-3 grid gap-2', showTrend && fat ? 'grid-cols-2' : 'grid-cols-1')}>
-          {showTrend ? <Tile label="Trend weight" value={weightText(summary.trendKg!, unit)} /> : null}
-          {fat ? <Tile label="Body fat" value={`${fixed1(fat.pct)}%`} sub={fatSub} /> : null}
-        </div>
-      ) : null}
+        {showTrend || fat ? (
+          <div className={cx('mt-3 grid gap-2', showTrend && fat ? 'grid-cols-2' : 'grid-cols-1')}>
+            {showTrend ? <Tile label="Trend weight" value={weightText(summary.trendKg!, unit)} /> : null}
+            {fat ? <Tile label="Body fat" value={`${fixed1(fat.pct)}%`} sub={fatSub} /> : null}
+          </div>
+        ) : null}
 
-      {chart ? (
-        <div className="mt-4">
-          <WeightChart model={chart} unit={unit} />
-        </div>
-      ) : nudge ? null : (
-        <p className="mt-3 text-[13px] text-muted">Weigh in again to start the 30-day chart.</p>
-      )}
-    </Link>
+        {chart ? (
+          <div className="mt-4">
+            <WeightChart model={chart} unit={unit} />
+          </div>
+        ) : nudge ? null : (
+          <p className="mt-3 text-[13px] text-muted">Weigh in again to start the 30-day chart.</p>
+        )}
+      </Link>
+    </div>
   );
 }

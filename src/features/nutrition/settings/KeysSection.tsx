@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, KeyRound } from 'lucide-react';
 import { Button, ListGroup, Spinner, TextField, confirm, cx, toast } from '../../../components/ui';
 import { testApiKey } from '../../../lib/nutrition/foodAi';
-import { FDC_DEMO_KEY, isAnthropicSecret, looksLikeAnthropicKey, maskKey, setAnthropicKey, setFdcKey } from '../../../lib/nutrition/keys';
+import { FDC_DEMO_KEY, isAnthropicSecret, isGithubSecret, looksLikeAnthropicKey, maskKey, setAnthropicKey, setFdcKey } from '../../../lib/nutrition/keys';
 
 /*
  * API keys are DEVICE-ONLY (lib/nutrition/keys.ts → localStorage): never in Dexie, never in a backup, never
  * logged, never put in a URL. The paste fields are password inputs outside any <form> (no autofill / save
- * prompts), and a saved key is only ever shown masked. A Claude key is refused in the USDA field (USDA puts
- * its key in the request URL).
+ * prompts), and a saved key is only ever shown masked. A Claude key or a GitHub key (the Hume inbox key) is
+ * refused in the USDA field (USDA puts its key in the request URL).
  */
 
 export const ANTHROPIC_KEYS_URL = 'https://console.anthropic.com/settings/keys';
@@ -63,12 +63,14 @@ export const CLAUDE_KEY_NOTE =
   "Your key is stored in this app on this phone — never in backups or in Heft's code. Use a separate key from a spend-limited workspace used only for Heft.";
 
 export const CLAUDE_KEY_IN_USDA = "That's your Claude key — paste it in the Claude field.";
+export const GITHUB_KEY_IN_USDA = "That's your GitHub key — paste it in Settings → Apple Health.";
 
-/** Why a pasted USDA key can't be saved, or null when it can. A Claude key must never reach USDA's URL logs. */
+/** Why a pasted USDA key can't be saved, or null when it can. A Claude or GitHub key must never reach USDA's URL logs. */
 export function usdaKeyProblem(v: string): string | null {
   const t = v.trim();
   if (!t) return null;
   if (isAnthropicSecret(t)) return CLAUDE_KEY_IN_USDA;
+  if (isGithubSecret(t)) return GITHUB_KEY_IN_USDA;
   if (t === FDC_DEMO_KEY) return "That's the shared demo key — paste your own key";
   return null;
 }
@@ -208,7 +210,7 @@ export function UsdaKeySection({ saved }: { saved: string | null }) {
           </p>
         ) : null}
         <KeyInput value={draft} onChange={setDraft} label="USDA API key" placeholder={saved ? 'Paste a new key to replace it' : 'Your api.data.gov key'} onEnter={save} />
-        {problem === CLAUDE_KEY_IN_USDA ? <p className="text-[13px] leading-snug text-danger">{CLAUDE_KEY_IN_USDA}</p> : null}
+        {problem === CLAUDE_KEY_IN_USDA || problem === GITHUB_KEY_IN_USDA ? <p className="text-[13px] leading-snug text-danger">{problem}</p> : null}
         <div className="flex flex-wrap gap-2">
           <Button disabled={!trimmed} onClick={save}>
             Save

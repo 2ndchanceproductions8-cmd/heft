@@ -51,14 +51,19 @@ export const FDC_DEMO_KEY = 'DEMO_KEY';
  * behind invisible characters (never send one anywhere but api.anthropic.com).
  */
 export const isAnthropicSecret = (v: string | null | undefined) => !!v && /sk-ant-/i.test(v);
+/**
+ * True when a value contains a GitHub token (the Hume inbox key): it must never be sent to USDA (in a URL). A real
+ * api.data.gov key is 40 letters and digits with no underscore, so it never matches.
+ */
+export const isGithubSecret = (v: string | null | undefined) => !!v && /github_pat_|gh[pousr]_[A-Za-z0-9]{20,}/.test(v);
 
 /**
- * The key to send to USDA: the user's own, else DEMO_KEY. A Claude key saved into the USDA slot by mistake is
- * NEVER sent (it would land in USDA's URL logs) — DEMO_KEY is used instead.
+ * The key to send to USDA: the user's own, else DEMO_KEY. A Claude or GitHub key saved into the USDA slot by mistake
+ * is NEVER sent (it would land in USDA's URL logs) — DEMO_KEY is used instead.
  */
 export const fdcKeyOrDemo = () => {
   const k = getFdcKey();
-  return k && !isAnthropicSecret(k) ? k : FDC_DEMO_KEY;
+  return k && !isAnthropicSecret(k) && !isGithubSecret(k) ? k : FDC_DEMO_KEY;
 };
 
 /** Forget both keys (called by Settings → "Delete all data"). */

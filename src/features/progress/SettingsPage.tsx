@@ -29,6 +29,7 @@ import {
   Gauge,
   Image as ImageIcon,
   Heart,
+  RefreshCw,
 } from 'lucide-react';
 import type { Settings } from '../../types';
 import { db, requestPersistentStorage } from '../../db';
@@ -54,6 +55,7 @@ import { formatWeight, kgToUnit, parseDecimal, round, unitToKg } from '../../lib
 import { countCachedExerciseImages, precacheExerciseImages } from '../../lib/offline';
 import { downloadBlob, exportBackup, exportCsv, importBackup, keepsFoodLog, parseBackup } from '../../lib/backup';
 import { clearNutritionKeys } from '../../lib/nutrition/keys';
+import { clearInboxToken, useInboxStatus, type InboxStatus } from '../../lib/healthInbox';
 import { flushActiveWorkout, useWorkoutStore } from '../../lib/workoutStore';
 import { uid } from '../../lib/ids';
 import { restOptionLabel, restOptionsWith } from '../../lib/rest';
@@ -389,6 +391,7 @@ export function SettingsPage() {
           chevron
           onClick={() => navigate('/settings/apple-health')}
         />
+        <HumeSyncRow onOpen={() => navigate('/settings/apple-health?to=auto')} />
       </ListGroup>
 
       <SectionHeader>Offline</SectionHeader>
@@ -447,6 +450,44 @@ export function SettingsPage() {
         ]}
       />
     </Page>
+  );
+}
+
+// ------------------------------------------------------------------ automatic Hume sync
+
+/**
+ * Delete all data's first question. Forgetting the GitHub key only stops Heft reading: the Shortcuts automation keeps
+ * posting to the inbox until it is removed there.
+ */
+export const DELETE_ALL_MESSAGE =
+  'This erases every workout, routine, custom exercise, measurement, meal, photo and setting on this device, and ' +
+  'forgets the Claude and USDA keys saved for the Food tab and the GitHub key for Hume sync. The Hume Health ' +
+  'automation in Shortcuts keeps sending weigh-ins to heft-inbox until you remove it there.';
+
+/** The subtitle under "Automatic Hume sync": what it does, or a problem worth a tap. */
+export function humeSyncSubtitle(status: InboxStatus): { text: string; warn: boolean } {
+  if (status.configured && status.state === 'token_rejected') return { text: 'GitHub rejected the key', warn: true };
+  if (status.configured && status.state === 'not_found') return { text: "The key can't see heft-inbox", warn: true };
+  if (status.configured && status.state === 'no_permission') return { text: "The key can't write Issues", warn: true };
+  if (status.configured && status.state === 'unreadable') return { text: "Heft can't read the Shortcut's posts", warn: true };
+  if (status.configured && status.lastImport) {
+    return { text: `Last weigh-in came in ${format(status.lastImport.at, 'MMM d, h:mm a')}`, warn: false };
+  }
+  return { text: 'Weigh-ins arrive when you close the Hume app', warn: false };
+}
+
+function HumeSyncRow({ onOpen }: { onOpen: () => void }) {
+  const status = useInboxStatus();
+  const sub = humeSyncSubtitle(status);
+  return (
+    <ListRow
+      icon={icon(<RefreshCw />)}
+      title="Automatic Hume sync"
+      subtitle={sub.warn ? <span className="text-warn">{sub.text}</span> : sub.text}
+      right={<Value>{status.configured ? 'On' : 'Off'}</Value>}
+      chevron
+      onClick={onOpen}
+    />
   );
 }
 
@@ -698,8 +739,7 @@ function DataSection() {
   const doDelete = async () => {
     const first = await confirm({
       title: 'Delete all data?',
-      message:
-        'This erases every workout, routine, custom exercise, measurement, meal, photo and setting on this device, and forgets the Claude and USDA keys saved for the Food tab.',
+      message: DELETE_ALL_MESSAGE,
       confirmLabel: 'Continue',
       danger: true,
     });
@@ -718,8 +758,10 @@ function DataSection() {
       await db.transaction('rw', db.tables, async () => {
         await Promise.all(db.tables.map((t) => t.clear()));
       });
-      // The Food tab's API keys live in localStorage, outside the database: a wiped phone must forget them too.
+      // The Food tab's API keys and the Hume sync key live in localStorage, outside the database: a wiped phone must
+      // forget them too.
       clearNutritionKeys();
+      clearInboxToken();
       window.location.reload();
     } catch (e) {
       console.error(e);

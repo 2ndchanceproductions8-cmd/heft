@@ -345,11 +345,16 @@ export interface Settings {
   /** The "Heft to Health" Shortcut is set up: show "Send to Apple Health" on workouts. */
   appleHealth: boolean;
   /**
-   * Apple Health import watermark (epoch ms): the newest sample a "Health to Heft" import brought into Heft (samples
-   * it skipped don't count). Older samples only update the rows they created, so an imported weigh-in the user
-   * deleted is never brought back.
+   * The newest Apple Health sample Heft holds (epoch ms), for "last weigh-in from Hume" displays. Since every weigh-in
+   * became its own row (2026-10-06) it no longer decides what an import may add: `healthDeleted` does.
    */
   healthImportedThrough?: number | null;
   /** Epoch ms of the last saved Apple Health import (null = never). */
   healthImportedAt?: number | null;
+  /**
+   * Imported weigh-ins the user deleted in Heft (their Apple Health sample time, epoch ms): an import never brings
+   * one back: the deleted sample itself (to the second), or its body fat arriving alone within 10 minutes, unless the
+   * user asks to bring deleted weigh-ins back. Written by lib/healthImport.ts deleteMeasurement().
+   */
+  healthDeleted?: number[];
 }

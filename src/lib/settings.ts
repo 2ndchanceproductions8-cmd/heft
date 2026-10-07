@@ -1,6 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import type { Measurement, Settings } from '../types';
+import { dayKey, dayStart } from './nutrition/math';
 
 export const DEFAULT_SETTINGS: Settings = {
   id: 'settings',
@@ -23,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appleHealth: false,
   healthImportedThrough: null,
   healthImportedAt: null,
+  healthDeleted: [],
 };
 
 /** Current settings (defaults until the DB answers — never undefined). */
@@ -65,13 +67,25 @@ export async function updateSettings(patch: Partial<Omit<Settings, 'id'>>): Prom
   });
 }
 
-/** The newest measurement that has a body weight. */
-export function newestWeighIn(): Promise<Measurement | undefined> {
-  return db.measurements
+/**
+ * The weigh-in that counts now: the newest day's typed weigh-in (its latest) if it has one, else its newest row — the
+ * rule lib/today.ts dailyWeighIns uses, so calories, Food targets and Settings use the weight Today shows.
+ */
+export async function newestWeighIn(): Promise<Measurement | undefined> {
+  const newest = await db.measurements
     .orderBy('date')
     .reverse()
     .filter((m) => !!m.bodyweightKg)
     .first();
+  if (!newest || newest.source !== 'health') return newest;
+  // A typed weigh-in beats the scale's on its day, even when the scale reading came later.
+  const typed = await db.measurements
+    .where('date')
+    .between(dayStart(dayKey(newest.date)), newest.date, true, true)
+    .reverse()
+    .filter((m) => !!m.bodyweightKg && m.source !== 'health')
+    .first();
+  return typed ?? newest;
 }
 
 /**

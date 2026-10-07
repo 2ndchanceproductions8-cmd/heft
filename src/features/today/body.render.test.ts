@@ -4,28 +4,54 @@ import 'fake-indexeddb/auto';
 import { createElement as h, type ReactElement } from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Measurement, Unit } from '../../types';
+import type { InboxState, InboxStatus } from '../../lib/healthInbox';
+import { db } from '../../db';
 import { clearBusy, isBusy } from '../../lib/busy';
+import { getSettings } from '../../lib/settings';
 import { bodySummary, goalRateKgPerWeek, type BodySummary } from '../../lib/today';
 import { kgToUnit, unitToKg } from '../../lib/units';
 import { BodyCard, BodyCardView, type BodyCardViewProps } from './BodyCard';
 import { weightChartModel } from './body/chart';
 import {
+  agoText,
   bodyFatChange,
   fixed1,
   formatGoal,
   formatRate,
   goalKind,
+  inboxLine,
   onTrack,
+  readingText,
+  readingWhen,
   staleNudge,
   syncedLabel,
   weighInWhen,
   weightText,
 } from './body/format';
-import { HUME_GUIDE, HumeSyncRowView } from './body/HumeSync';
+import { checkNowToast, HUME_AUTO_SETUP, HUME_GUIDE, HumeAutoRowView, HumeSync, HumeSyncRowView } from './body/HumeSync';
+import { deleteWeighIn, WeighInsList } from './body/WeighInsSheet';
+import { alsoDeleted, deleteWeighInConfirm, showsCountsMarker, weighInList, type WeighInItem } from './body/weighIns';
 import { HealthImportCard } from '../progress/components/HealthImportCard';
 import { HEALTH_BUSY, useHealthImport, type HealthImport } from '../progress/components/useHealthImport';
+
+// The inbox status is the inbox builder's live store: tests set what useInboxStatus() answers.
+const inbox = vi.hoisted(() => ({
+  status: { configured: false, state: 'off', checkedAt: null, lastImport: null, lastPostAt: null } as InboxStatus,
+}));
+vi.mock('../../lib/healthInbox', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/healthInbox')>()),
+  useInboxStatus: () => inbox.status,
+}));
+// confirm() / toast() resolve through the app's DialogHost; the delete flow's tests answer them here.
+const dialogs = vi.hoisted(() => ({ confirm: vi.fn(), toast: vi.fn() }));
+vi.mock('../../components/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../components/ui')>()),
+  confirm: dialogs.confirm,
+  toast: dialogs.toast,
+}));
+const NOT_CONFIGURED: InboxStatus = { configured: false, state: 'off', checkedAt: null, lastImport: null, lastPostAt: null };
 
 /** Visible text of the rendered markup (tags stripped), plus the raw HTML for attribute checks. */
 function render(el: ReactElement, url = '/today'): string {
@@ -278,9 +304,9 @@ describe('Body card states', () => {
   });
 });
 
-describe('Hume sync row', () => {
+describe('Hume sync row, not automatic yet (by hand)', () => {
   const noop = () => {};
-  it('never imported: the buttons (the first sync works from Today) plus a Set up link to the Shortcut guide', () => {
+  it('never imported: the buttons (the first sync works from Today), a Set up link to the Shortcut guide, and Make it automatic', () => {
     const out = render(h(HumeSyncRowView, { importedAt: null, neverImported: true, returned: false, now: NOW, onGet: noop, onPaste: noop }));
     expect(out).toContain('Hume scale · Not synced yet');
     expect(out).toContain(`href="${HUME_GUIDE}"`);
@@ -288,9 +314,12 @@ describe('Hume sync row', () => {
     expect(HUME_GUIDE).toBe('/settings/apple-health?to=weigh-ins');
     expect(out).toContain('Get from Health');
     expect(out).toContain('>Paste<');
+    expect(out).toMatch(/<a[^>]*href="\/settings\/apple-health\?to=auto"[^>]*>(?:(?!<\/a>)[\s\S])*Make it automatic<\/a>/);
+    expect(HUME_AUTO_SETUP).toBe('/settings/apple-health?to=auto');
+    expect(out).not.toContain('auto sync');
   });
 
-  it('imported before: last sync time and the two buttons', () => {
+  it('imported before: last sync time, the two buttons and Make it automatic', () => {
     const out = render(
       h(HumeSyncRowView, { importedAt: NOW - 2 * 3_600_000, neverImported: false, returned: false, now: NOW, onGet: noop, onPaste: noop }),
     );
@@ -298,6 +327,14 @@ describe('Hume sync row', () => {
     expect(out).toContain('Get from Health');
     expect(out).toContain('>Paste<');
     expect(out).not.toContain('>Set up<');
+    expect(out).toContain(`href="${HUME_AUTO_SETUP}"`);
+    expect(out).toContain('Make it automatic');
+  });
+
+  it('the Make it automatic link is a 40px tap target', () => {
+    const out = render(h(HumeSyncRowView, { importedAt: null, neverImported: false, returned: false, now: NOW, onGet: noop, onPaste: noop }));
+    const link = /<a[^>]*data-action="make-automatic"[^>]*>/.exec(out)?.[0] ?? '';
+    expect(link).toContain('h-10');
   });
 
   it('while settings load: holds the buttons row’s height, hidden (no flash of Set up)', () => {
@@ -311,6 +348,465 @@ describe('Hume sync row', () => {
     const out = render(h(HumeSyncRowView, { importedAt: NOW - 60_000, neverImported: false, returned: true, now: NOW, onGet: noop, onPaste: noop }));
     expect(out).toContain('Back from Shortcuts? Tap Paste.');
     expect(out).toMatch(/bg-accent text-on-accent[^"]*"[^>]*>Paste</);
+  });
+});
+
+describe('Hume sync row, automatic', () => {
+  const MIN = 60_000;
+  const HOUR = 3_600_000;
+  const status = (state: InboxState, p: Partial<InboxStatus> = {}): InboxStatus => ({
+    configured: true,
+    state,
+    checkedAt: NOW - 5 * MIN,
+    lastImport: null,
+    lastPostAt: null,
+    ...p,
+  });
+  const auto = (s: InboxStatus, checking = false) => render(h(HumeAutoRowView, { status: s, now: NOW, checking, onCheck: () => {} }));
+  /** The Check now <button> tag. */
+  const checkButton = (out: string) => /<button[^>]*>(?:(?!<\/button>)[\s\S])*Check now<\/button>/.exec(out)?.[0] ?? '';
+
+  it('every state: the title, a status line, and Check now (40px+, disabled only while checking)', () => {
+    const expected: Record<InboxState, string> = {
+      off: 'Checked 5 min ago',
+      idle: 'Checked 5 min ago',
+      checking: 'Checking…',
+      ok: 'Checked 5 min ago',
+      offline: "Offline. Heft checks again when you're back online",
+      token_rejected: 'GitHub key rejected',
+      not_found: "Can't reach the inbox",
+      no_permission: "GitHub key can't use Issues",
+      unreadable: "Can't read what the Shortcut sent",
+      error: "Couldn't check",
+    };
+    for (const [state, line] of Object.entries(expected) as [InboxState, string][]) {
+      const out = auto(status(state));
+      expect(out, state).toContain('Hume · auto sync');
+      expect(out, state).toContain(line);
+      expect(out, state).toContain(`data-inbox="${state}"`);
+      const button = checkButton(out);
+      expect(button, state).toContain('h-10!');
+      if (state === 'checking') {
+        expect(button).toContain('disabled=""');
+        expect(button).toContain('animate-spin');
+      } else {
+        expect(button, state).not.toContain('disabled=""');
+        expect(button, state).not.toContain('animate-spin');
+      }
+      expect(out, state).not.toContain('Get from Health');
+      expect(out, state).not.toContain('Make it automatic');
+    }
+  });
+
+  it('what only the owner can fix (key, inbox, permission, an unreadable Shortcut): danger colour and Fix in Settings', () => {
+    for (const state of ['token_rejected', 'not_found', 'no_permission', 'unreadable'] as const) {
+      const out = auto(status(state));
+      expect(out, state).toMatch(/<a[^>]*href="\/settings\/apple-health\?to=auto"[^>]*>Fix in Settings<\/a>/);
+      expect(out, state).toMatch(
+        /<p class="[^"]*text-danger[^"]*"[^>]*>(GitHub key rejected|Can&#x27;t reach the inbox|GitHub key can&#x27;t use Issues|Can&#x27;t read what the Shortcut sent)<\/p>/,
+      );
+      expect(/<a[^>]*>Fix in Settings/.exec(out)?.[0], state).toContain('min-h-10');
+    }
+    for (const state of ['ok', 'idle', 'offline', 'error', 'checking'] as const) {
+      const out = auto(status(state));
+      expect(out, state).not.toContain('Fix in Settings');
+      // The status line stays muted.
+      const line = /<p class="([^"]*)"[^>]*data-line="inbox"/.exec(out)?.[1] ?? '';
+      expect(line, state).toContain('text-muted');
+      expect(line, state).not.toContain('text-danger');
+      // It ticks every minute and flips to Checking… on every wake: not a live region (real news is a toast).
+      expect(out, state).not.toContain('aria-live');
+    }
+  });
+
+  it('the Check now call running shows Checking… and disables the button, whatever the last state', () => {
+    const out = auto(status('ok'), true);
+    expect(out).toContain('Checking…');
+    expect(out).toContain('data-inbox="checking"');
+    expect(checkButton(out)).toContain('disabled=""');
+  });
+
+  it('a recent import is the news; an older one gives way to the last check', () => {
+    const fresh = { at: NOW - 20_000, added: 1, updated: 0 };
+    expect(auto(status('ok', { checkedAt: NOW - 20_000, lastImport: fresh }))).toContain('1 new weigh-in just now');
+    expect(auto(status('ok', { checkedAt: NOW - 20_000, lastImport: fresh }))).not.toContain('checked');
+    const earlier = { at: NOW - 2 * HOUR, added: 3, updated: 0 };
+    expect(auto(status('ok', { checkedAt: NOW - 30_000, lastImport: earlier }))).toContain('3 new weigh-ins 2h ago · checked just now');
+    const updatedOnly = { at: NOW - 10 * MIN, added: 0, updated: 2 };
+    expect(auto(status('ok', { checkedAt: NOW - 10 * MIN, lastImport: updatedOnly }))).toContain('2 weigh-ins updated 10 min ago');
+    const old = { at: NOW - 13 * HOUR, added: 1, updated: 0 };
+    const out = auto(status('ok', { checkedAt: NOW - 3 * MIN, lastImport: old }));
+    expect(out).toContain('Checked 3 min ago');
+    expect(out).not.toContain('new weigh-in');
+  });
+
+  it('a token saved but never checked', () => {
+    expect(auto(status('idle', { checkedAt: null }))).toContain('Not checked yet');
+  });
+
+  it('a plain check says when the iPhone last sent, so a Shortcut that stopped reads differently from a quiet one', () => {
+    expect(auto(status('ok'))).toContain('Checked 5 min ago · nothing from iPhone yet');
+    expect(auto(status('ok', { lastPostAt: NOW - 3 * HOUR }))).toContain('Checked 5 min ago · iPhone sent 3h ago');
+    expect(auto(status('idle', { checkedAt: null, lastPostAt: NOW - 3 * HOUR }))).toContain('Not checked yet');
+    expect(auto(status('idle', { checkedAt: null, lastPostAt: NOW - 3 * HOUR }))).not.toContain('iPhone sent');
+  });
+
+  it('inboxLine: the words, and which states need the owner', () => {
+    const base = { checkedAt: NOW - 2 * HOUR, lastImport: null, lastPostAt: null };
+    expect(inboxLine({ state: 'ok', ...base }, NOW)).toEqual({ text: 'Checked 2h ago · nothing from iPhone yet', fix: false });
+    expect(inboxLine({ state: 'ok', checkedAt: NOW - 2 * HOUR, lastImport: null, lastPostAt: NOW - 2 * HOUR }, NOW)).toEqual({
+      text: 'Checked 2h ago · iPhone sent 2h ago',
+      fix: false,
+    });
+    expect(inboxLine({ state: 'ok', ...base }, NOW, true)).toEqual({ text: 'Checking…', fix: false });
+    expect(inboxLine({ state: 'token_rejected', ...base }, NOW)).toEqual({ text: 'GitHub key rejected', fix: true });
+    expect(inboxLine({ state: 'not_found', ...base }, NOW)).toEqual({ text: "Can't reach the inbox", fix: true });
+    expect(inboxLine({ state: 'no_permission', ...base }, NOW)).toEqual({ text: "GitHub key can't use Issues", fix: true });
+    expect(inboxLine({ state: 'unreadable', ...base }, NOW)).toEqual({ text: "Can't read what the Shortcut sent", fix: true });
+    expect(inboxLine({ state: 'offline', ...base }, NOW).fix).toBe(false);
+    expect(inboxLine({ state: 'error', ...base }, NOW)).toEqual({ text: "Couldn't check", fix: false });
+    expect(inboxLine({ state: 'ok', checkedAt: at(dayOffset(-1), 6), lastImport: null, lastPostAt: null }, NOW).text).toBe(
+      'Checked yesterday · nothing from iPhone yet',
+    );
+  });
+
+  it('Check now only toasts what the watcher stays quiet about', () => {
+    expect(checkNowToast({ state: 'ok', added: 0, updated: 0 })).toEqual(['No new weigh-ins', 'info']);
+    expect(checkNowToast({ state: 'ok', added: 0, updated: 1 })).toEqual(['1 weigh-in updated', 'success']);
+    // New weigh-ins: HealthInboxWatcher's "From Hume: …" toast. Problems: the status line (and the watcher).
+    expect(checkNowToast({ state: 'ok', added: 2, updated: 0 })).toBeNull();
+    for (const state of ['offline', 'token_rejected', 'not_found', 'no_permission', 'unreadable', 'error', 'off'] as const) {
+      expect(checkNowToast({ state, added: 0, updated: 0 })).toBeNull();
+    }
+  });
+
+  it('agoText', () => {
+    expect(agoText(NOW - 59_000, NOW)).toBe('just now');
+    expect(agoText(NOW - 12 * MIN, NOW)).toBe('12 min ago');
+    expect(agoText(NOW - 5 * HOUR, NOW)).toBe('5h ago');
+    expect(agoText(at(dayOffset(-3)), NOW)).toBe('3 days ago');
+  });
+});
+
+describe('Hume row on the live card', () => {
+  beforeEach(() => {
+    inbox.status = NOT_CONFIGURED;
+  });
+
+  it('automatic sync set up: the automatic row, even off iPhone (it works on any device)', () => {
+    inbox.status = { configured: true, state: 'ok', checkedAt: Date.now() - 60_000, lastImport: null, lastPostAt: null };
+    const out = render(h(BodyCard, { today: TODAY, now: NOW }));
+    expect(out).toContain('Hume · auto sync');
+    expect(out).toContain('Check now');
+    expect(out).not.toContain('Get from Health');
+  });
+
+  it('not set up, off iPhone: no Hume row (Shortcuts only exists on iPhone / iPad)', () => {
+    const out = render(h(BodyCard, { today: TODAY, now: NOW }));
+    expect(out).not.toContain('Hume ·');
+    expect(out).not.toContain('Hume scale');
+    expect(out).not.toContain('Make it automatic');
+  });
+
+  it('HumeSync picks the row by the inbox status', () => {
+    const configured = render(h(HumeSync, { unit: 'lb', now: NOW, inbox: { ...NOT_CONFIGURED, configured: true, state: 'idle' } }));
+    expect(configured).toContain('data-state="sync-auto"');
+    expect(configured).toContain('Hume · auto sync');
+
+    const manual = render(h(HumeSync, { unit: 'lb', now: NOW, inbox: NOT_CONFIGURED }));
+    expect(manual).toContain('data-state="sync-manual"');
+    expect(manual).toContain('Get from Health');
+    expect(manual).toContain('>Paste<');
+    expect(manual).toContain('Make it automatic');
+    expect(manual).toContain(`href="${HUME_AUTO_SETUP}"`);
+    expect(manual).not.toContain('auto sync');
+  });
+});
+
+// ------------------------------------------------------------------ weigh-ins sheet
+
+/** Local time on a day, as a Hume (Apple Health) reading: id "hk_<ms>", healthAt = the sample time. */
+function hume(day: string, hh: number, mm: number, lb: number | null, fat: number | null = null): Measurement {
+  const t = at(day, hh, mm);
+  return {
+    id: `hk_${t}`,
+    date: t,
+    bodyweightKg: lb == null ? null : unitToKg(lb, 'lb'),
+    bodyFatPct: fat,
+    photoIds: [],
+    source: 'health',
+    healthAt: t,
+  };
+}
+
+describe('Weigh-ins sheet', () => {
+  const Y = dayOffset(-1); // Mon Oct 5
+  const reweigh = hume(TODAY, 7, 5, 183.9, 19.6); // the day's latest Hume reading: counts
+  const bad = hume(TODAY, 7, 2, 184.2, 19.4);
+  const humeY = hume(Y, 6, 58, 184.8, 19.8);
+  const typedY: Measurement = { id: 'm_typed', date: at(Y, 6, 30), bodyweightKg: unitToKg(184.5, 'lb'), photoIds: [], source: 'manual' };
+  // An imported row the owner edited: theirs now (no Hume tag) but still from Apple Health.
+  const edited: Measurement = { ...hume(dayOffset(-2), 7, 10, 184.0), source: 'manual' };
+  const fatOnly = hume(dayOffset(-3), 7, 0, null, 19.6);
+  const firstDay = hume(dayOffset(-13), 7, 0, 185.0);
+  const tooOld = hume(dayOffset(-14), 7, 0, 185.2);
+  const waistOnly: Measurement = { id: 'm_waist', date: at(TODAY, 8), bodyweightKg: null, waistCm: 85, photoIds: [] };
+  const ROWS = [tooOld, firstDay, fatOnly, edited, typedY, humeY, bad, reweigh, waistOnly];
+
+  const items = () => weighInList(ROWS, TODAY);
+  const byId = (id: string) => items().find((i) => i.id === id)!;
+  const list = (unit: Unit = 'lb', list: WeighInItem[] = items()) =>
+    render(h(WeighInsList, { items: list, unit, today: TODAY, onDelete: () => {} }));
+  /** Each <li> of the rendered list, keyed by its row id. */
+  function lis(out: string): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const x of out.matchAll(/<li[^>]*data-reading="([^"]+)"[^>]*>[\s\S]*?<\/li>/g)) m.set(x[1], x[0]);
+    return m;
+  }
+
+  it('the last 14 days of readings with a weight or body fat, newest first', () => {
+    expect(items().map((i) => i.id)).toEqual([reweigh.id, bad.id, humeY.id, typedY.id, edited.id, fatOnly.id, firstDay.id]);
+    expect(weighInList([], TODAY)).toEqual([]);
+  });
+
+  it('a latest weigh-in older than two weeks is still listed (the card shows it and opens this sheet)', () => {
+    const old = hume(dayOffset(-20), 7, 0, 185.0);
+    const list20 = weighInList([old], TODAY);
+    expect(list20).toHaveLength(1);
+    expect(list20[0]).toMatchObject({ id: old.id, counts: true, day: dayOffset(-20) });
+    // Back to the latest weigh-in's day, no further; a later fat-only reading rides along.
+    const older = hume(dayOffset(-25), 7, 0, 186.0);
+    const fat = hume(dayOffset(-18), 7, 0, null, 19.9);
+    expect(weighInList([older, old, fat], TODAY).map((i) => i.id)).toEqual([fat.id, old.id]);
+    // The card's number is the same reading.
+    expect(bodySummary([older, old, fat], TODAY).latest?.id).toBe(old.id);
+  });
+
+  it('which reading counts for its day (the trend’s rule), and when that is worth saying', () => {
+    expect(byId(reweigh.id)).toMatchObject({ counts: true, sameDayCount: 2, hume: true, fromHealth: true });
+    expect(byId(bad.id)).toMatchObject({ counts: false, sameDayCount: 2 });
+    // A typed weigh-in beats the scale's, earlier or not.
+    expect(byId(typedY.id)).toMatchObject({ counts: true, hume: false, fromHealth: false });
+    expect(byId(humeY.id)).toMatchObject({ counts: false });
+    expect(byId(edited.id)).toMatchObject({ counts: true, sameDayCount: 1, hume: false, fromHealth: true });
+    expect(byId(fatOnly.id)).toMatchObject({ counts: false, kg: null, bodyFatPct: 19.6, hume: true });
+    expect(items().filter(showsCountsMarker).map((i) => i.id)).toEqual([reweigh.id, typedY.id]);
+  });
+
+  it('renders each row: value, body fat, day and time, the Hume tag, the counts marker', () => {
+    const out = list();
+    expect([...out.matchAll(/data-reading="([^"]+)"/g)].map((m) => m[1])).toEqual(items().map((i) => i.id));
+    const li = lis(out);
+    expect(li.size).toBe(7);
+    expect(li.get(reweigh.id)).toContain('>183.9 lb<');
+    expect(li.get(reweigh.id)).toContain('>19.6% body fat<');
+    expect(li.get(reweigh.id)).toContain('>Today, 7:05 AM<');
+    expect(li.get(bad.id)).toContain('>Today, 7:02 AM<');
+    expect(li.get(humeY.id)).toContain('>Yesterday, 6:58 AM<');
+    expect(li.get(edited.id)).toContain('>Sun, Oct 4, 7:10 AM<');
+    expect(li.get(firstDay.id)).toContain('>Wed, Sep 23, 7:00 AM<');
+    // Body fat only: it is the row's value.
+    expect(li.get(fatOnly.id)).toMatch(/text-\[16px\] font-semibold">19\.6% body fat</);
+    expect(li.get(fatOnly.id)).not.toContain(' lb<');
+
+    const tagged = [...li].filter(([, html]) => html.includes('data-tag="hume"')).map(([id]) => id);
+    expect(tagged).toEqual([reweigh.id, bad.id, humeY.id, fatOnly.id, firstDay.id]);
+    const marked = [...li].filter(([, html]) => html.includes('data-marker="counts"')).map(([id]) => id);
+    expect(marked).toEqual([reweigh.id, typedY.id]);
+    expect(li.get(reweigh.id)).toContain('Counts for the day');
+  });
+
+  it('every row has its own Delete button, named for the reading, 40px', () => {
+    const out = list();
+    const labels = [...out.matchAll(/<button[^>]*aria-label="([^"]+)"[^>]*>/g)].map((m) => m[1]);
+    expect(labels).toEqual([
+      'Delete 183.9 lb · Oct 6, 7:05 AM',
+      'Delete 184.2 lb · Oct 6, 7:02 AM',
+      'Delete 184.8 lb · Oct 5, 6:58 AM',
+      'Delete 184.5 lb · Oct 5, 6:30 AM',
+      'Delete 184.0 lb · Oct 4, 7:10 AM',
+      'Delete 19.6% body fat · Oct 3, 7:00 AM',
+      'Delete 185.0 lb · Sep 23, 7:00 AM',
+    ]);
+    for (const b of out.match(/<button[^>]*aria-label="Delete[^>]*>/g)!) {
+      expect(b).toContain('h-10 w-10');
+      expect(b).toContain('text-danger');
+      expect(b).not.toContain('disabled=""');
+    }
+    // While a delete is being confirmed, the others wait.
+    const busy = render(h(WeighInsList, { items: items(), unit: 'lb', today: TODAY, busy: true, onDelete: () => {} }));
+    expect(busy.match(/<button[^>]*aria-label="Delete[^>]*disabled=""/g)?.length).toBe(7);
+  });
+
+  it('in kg', () => {
+    const out = list('kg');
+    expect(out).toContain(weightText(reweigh.bodyweightKg!, 'kg'));
+    expect(out).toContain('Delete 83.4 kg · Oct 6, 7:05 AM');
+    expect(out).not.toContain(' lb');
+  });
+
+  it('nothing in two weeks: says so', () => {
+    const out = list('lb', []);
+    expect(out).toContain('No weigh-ins in the last 14 days.');
+    expect(out).not.toContain('<ul');
+  });
+
+  it('the Delete confirmation: the reading, and for Hume readings that it won’t come back', () => {
+    expect(deleteWeighInConfirm(byId(bad.id), 'lb')).toEqual({
+      title: 'Delete this weigh-in?',
+      message: "184.2 lb · Oct 6, 7:02 AM. It won't come back from Hume.",
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    expect(deleteWeighInConfirm(byId(typedY.id), 'lb').message).toBe('184.5 lb · Oct 5, 6:30 AM.');
+    // An edited Hume reading is still remembered as deleted, so the sentence holds.
+    expect(deleteWeighInConfirm(byId(edited.id), 'lb').message).toBe("184.0 lb · Oct 4, 7:10 AM. It won't come back from Hume.");
+    expect(deleteWeighInConfirm(byId(fatOnly.id), 'kg').message).toBe("19.6% body fat · Oct 3, 7:00 AM. It won't come back from Hume.");
+    expect(deleteWeighInConfirm(byId(bad.id), 'kg').message).toBe("83.6 kg · Oct 6, 7:02 AM. It won't come back from Hume.");
+  });
+
+  it('a typed check-in: what else deleting its row loses, on the row and in the confirmation', () => {
+    const checkin: Measurement = { ...typedY, id: 'm_checkin', photoIds: ['p1', 'p2'], waistCm: 85, notes: 'x' };
+    const item = weighInList([checkin], TODAY)[0];
+    expect(alsoDeleted(checkin)).toEqual(['2 photos', 'waist measurement', 'note']);
+    expect(deleteWeighInConfirm(item, 'lb')).toEqual({
+      title: 'Delete this weigh-in?',
+      message: '184.5 lb · Oct 5, 6:30 AM. Its 2 photos, waist measurement and note will be deleted too.',
+      danger: true,
+      confirmLabel: 'Delete all',
+    });
+    // An edited Hume reading with a photo: both sentences.
+    const editedPhoto = weighInList([{ ...edited, photoIds: ['p1'] }], TODAY)[0];
+    expect(deleteWeighInConfirm(editedPhoto, 'lb')).toMatchObject({
+      message: "184.0 lb · Oct 4, 7:10 AM. It won't come back from Hume. Its 1 photo will be deleted too.",
+      confirmLabel: 'Delete all',
+    });
+    // Tape words; blank notes, zero and junk values don't count.
+    expect(alsoDeleted({ photoIds: [], waistCm: 85, chestCm: 100, neckCm: 0, armCm: Number.NaN, notes: '  ' })).toEqual([
+      'waist and chest measurements',
+    ]);
+    expect(alsoDeleted({ photoIds: [], thighCm: 60, hipsCm: 98, armCm: 35 })).toEqual(['arm, thigh and hips measurements']);
+    expect(alsoDeleted(typedY)).toEqual([]);
+    // The list row doesn't look like a bare reading.
+    const li = lis(list('lb', [item, byId(typedY.id), byId(reweigh.id)]));
+    expect(li.get(checkin.id)).toContain('data-marker="extras"');
+    expect(li.get(checkin.id)).toContain('2 photos + more');
+    expect(li.get(typedY.id)).not.toContain('data-marker="extras"');
+    expect(li.get(reweigh.id)).not.toContain('data-marker="extras"');
+    const onePhoto = lis(list('lb', [weighInList([{ ...typedY, photoIds: ['p1'] }], TODAY)[0]]));
+    expect(onePhoto.get(typedY.id)).toMatch(/data-marker="extras"[^>]*><svg[\s\S]*?<\/svg>1 photo<\/span>/);
+  });
+
+  it('reading words', () => {
+    expect(readingWhen(at(TODAY, 19, 45), TODAY)).toBe('Today, 7:45 PM');
+    expect(readingWhen(at(dayOffset(-1), 6, 5), TODAY)).toBe('Yesterday, 6:05 AM');
+    expect(readingWhen(at(dayOffset(-5), 7, 0), TODAY)).toBe('Thu, Oct 1, 7:00 AM');
+    expect(readingText({ at: at(TODAY, 7, 2), kg: unitToKg(184.2, 'lb'), bodyFatPct: 19.4 }, 'lb')).toBe('184.2 lb · Oct 6, 7:02 AM');
+  });
+});
+
+describe('Body card: the big number opens the weigh-ins', () => {
+  const rows = [row(dayOffset(-1), unitToKg(185, 'lb')), row(TODAY, unitToKg(184.2, 'lb'), { source: 'health' })];
+
+  it('the number area is a button that opens the sheet; the rest of the card still opens Measurements', () => {
+    const out = view({ rows, onShowWeighIns: () => {} });
+    const button = /<button[^>]*data-action="weigh-ins"[^>]*>[\s\S]*?<\/button>/.exec(out)?.[0] ?? '';
+    expect(button).toContain('aria-haspopup="dialog"');
+    expect(button).toMatch(/data-weight[^>]*>184\.2</);
+    expect(button).toContain('Today, 7:02 AM');
+    expect(button).toContain('Show weigh-ins');
+    // Title, pace and details: still links to Measurements.
+    expect(out.match(/href="\/progress\/measurements"/g)?.length).toBe(3);
+    expect(out).toContain('data-state="normal"');
+  });
+
+  it('no button inside a link, no link inside a button', () => {
+    const out = view({ rows: series(-0.1, { fat: true }), goalRateKg: LOSE, onShowWeighIns: () => {} });
+    const links = [...out.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/g)].map((m) => m[1]);
+    expect(links.length).toBeGreaterThanOrEqual(3);
+    for (const inner of links) expect(inner).not.toMatch(/<(button|a)\b/);
+    const buttons = [...out.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map((m) => m[1]);
+    expect(buttons).toHaveLength(1);
+    for (const inner of buttons) expect(inner).not.toMatch(/<(button|a)\b/);
+  });
+
+  it('without the handler the number is plain text', () => {
+    const out = view({ rows });
+    expect(out).not.toContain('data-action="weigh-ins"');
+    expect(out).not.toContain('<button');
+    expect(out).toMatch(/data-weight[^>]*>184\.2</);
+  });
+
+  it('the empty and profile states have no weigh-ins to list', () => {
+    expect(view({ rows: [], onShowWeighIns: () => {} })).not.toContain('data-action="weigh-ins"');
+    expect(view({ rows: [], profileKg: 80, onShowWeighIns: () => {} })).not.toContain('data-action="weigh-ins"');
+  });
+});
+
+describe('Deleting a weigh-in from Today', () => {
+  beforeEach(async () => {
+    await db.measurements.clear();
+    await db.settings.clear();
+    dialogs.confirm.mockReset();
+    dialogs.toast.mockReset();
+  });
+
+  it('asks first; Delete removes it and remembers the Hume reading so a sync never brings it back', async () => {
+    const bad = hume(TODAY, 7, 2, 184.2, 19.4);
+    const good = hume(TODAY, 7, 5, 183.9, 19.6);
+    await db.measurements.bulkPut([bad, good]);
+    const item = weighInList(await db.measurements.toArray(), TODAY).find((i) => i.id === bad.id)!;
+
+    dialogs.confirm.mockResolvedValueOnce(false);
+    expect(await deleteWeighIn(item, 'lb')).toBe(false);
+    expect(dialogs.confirm).toHaveBeenCalledWith({
+      title: 'Delete this weigh-in?',
+      message: "184.2 lb · Oct 6, 7:02 AM. It won't come back from Hume.",
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    expect(await db.measurements.get(bad.id)).toBeDefined();
+    expect(dialogs.toast).not.toHaveBeenCalled();
+
+    dialogs.confirm.mockResolvedValueOnce(true);
+    expect(await deleteWeighIn(item, 'lb')).toBe(true);
+    expect(await db.measurements.get(bad.id)).toBeUndefined();
+    expect(await db.measurements.get(good.id)).toBeDefined();
+    expect((await getSettings()).healthDeleted).toEqual([bad.healthAt]);
+    expect(dialogs.toast).toHaveBeenCalledWith('Weigh-in deleted', 'success');
+  });
+
+  it('a typed check-in: the confirmation says its photos, tape and note go too; Cancel keeps all of it', async () => {
+    const checkin: Measurement = {
+      id: 'm_c',
+      date: at(TODAY, 6, 30),
+      bodyweightKg: 83.5,
+      waistCm: 85,
+      photoIds: ['p1', 'p2'],
+      notes: 'Week 4',
+      source: 'manual',
+    };
+    await db.measurements.put(checkin);
+    dialogs.confirm.mockResolvedValueOnce(false);
+    expect(await deleteWeighIn(weighInList([checkin], TODAY)[0], 'kg')).toBe(false);
+    expect(dialogs.confirm).toHaveBeenCalledWith({
+      title: 'Delete this weigh-in?',
+      message: '83.5 kg · Oct 6, 6:30 AM. Its 2 photos, waist measurement and note will be deleted too.',
+      danger: true,
+      confirmLabel: 'Delete all',
+    });
+    expect(await db.measurements.get(checkin.id)).toEqual(checkin);
+  });
+
+  it('a typed weigh-in: deleted, nothing to remember', async () => {
+    const typed: Measurement = { id: 'm_t', date: at(TODAY, 6, 30), bodyweightKg: 83.5, photoIds: [], source: 'manual' };
+    await db.measurements.put(typed);
+    dialogs.confirm.mockResolvedValueOnce(true);
+    expect(await deleteWeighIn(weighInList([typed], TODAY)[0], 'kg')).toBe(true);
+    expect(dialogs.confirm.mock.calls[0][0].message).toBe('83.5 kg · Oct 6, 6:30 AM.');
+    expect(await db.measurements.count()).toBe(0);
+    expect((await getSettings()).healthDeleted ?? []).toEqual([]);
+    expect(dialogs.toast).toHaveBeenCalledWith('Weigh-in deleted', 'success');
   });
 });
 

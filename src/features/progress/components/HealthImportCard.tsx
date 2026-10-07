@@ -7,9 +7,10 @@ import { useHealthImport } from './useHealthImport';
 
 /*
  * Measurements → "Import from Apple Health" (iPhone/iPad only). "Get from Health" runs the user's "Health to Heft"
- * Shortcut, which copies the latest weigh-in as text; back in Heft, "Paste from Health" reads the clipboard,
- * previews what will be added / updated / skipped, and Save writes it (lib/healthImport.ts). When the clipboard
- * can't be read (permission refused, older iOS), the sheet offers a box to long-press-paste into instead.
+ * Shortcut, which copies the last 30 days of weigh-ins as text; back in Heft, "Paste from Health" reads the
+ * clipboard, previews what will be added / updated / skipped, and Save writes it (lib/healthImport.ts: every weigh-in
+ * is its own row, and one deleted in Heft stays deleted). When the clipboard can't be read (permission refused, older
+ * iOS), the sheet offers a box to long-press-paste into instead.
  * The flow itself (state, handlers, the paste / preview sheet) is useHealthImport, shared with the Today Body card.
  */
 

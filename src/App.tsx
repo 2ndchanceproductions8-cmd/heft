@@ -13,7 +13,6 @@ import { WorkoutDetailPage } from './features/history/WorkoutDetailPage';
 import { ExerciseLibraryPage } from './features/exercises/ExerciseLibraryPage';
 import { ExerciseFormPage } from './features/exercises/ExerciseFormPage';
 import { SettingsPage } from './features/progress/SettingsPage';
-import { AppleHealthPage } from './features/progress/AppleHealthPage';
 import { TodayPage } from './features/today/TodayPage';
 import { Loading } from './components/ui';
 import { nutritionFullRoutes, nutritionTabRoutes } from './features/nutrition/routes';
@@ -32,6 +31,8 @@ function lazyPage(load: () => Promise<ComponentType>) {
 const ExerciseDetailPage = lazyPage(() => import('./features/exercises/ExerciseDetailPage').then((m) => m.ExerciseDetailPage));
 const ProgressPage = lazyPage(() => import('./features/progress/ProgressPage').then((m) => m.ProgressPage));
 const MeasurementsPage = lazyPage(() => import('./features/progress/MeasurementsPage').then((m) => m.MeasurementsPage));
+// The Apple Health setup guide is long and opened rarely: its own chunk too.
+const AppleHealthPage = lazyPage(() => import('./features/progress/AppleHealthPage').then((m) => m.AppleHealthPage));
 
 // Hash routing works on any static host (no SPA rewrite rules needed) and inside the installed PWA.
 // Error boundaries (RouteError) at three levels so a render throw or a lazy chunk that fails to load never

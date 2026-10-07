@@ -1,5 +1,7 @@
 import { differenceInCalendarDays, format } from 'date-fns';
 import type { Unit } from '../../../types';
+import type { InboxStatus } from '../../../lib/healthInbox';
+import { dayKey, shiftDay } from '../../../lib/nutrition/math';
 import { kgToUnit } from '../../../lib/units';
 import { relativeDay } from '../../progress/format';
 
@@ -96,14 +98,93 @@ export function bodyFatChange(ratePerWeek: number): string {
   return `${v < 0 ? MINUS : '+'}${fixed1(Math.abs(v))}% in 4 wk`;
 }
 
+/** How long ago: "just now", "12 min ago", "2h ago", "yesterday", "3 days ago", then "2w ago" / "Aug 4". */
+export function agoText(at: number, now: number): string {
+  const ms = now - at;
+  if (ms < 60_000) return 'just now';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} min ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  const days = differenceInCalendarDays(now, at);
+  if (days <= 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return relativeDay(at, now);
+}
+
 /** The last Apple Health import: "Synced just now", "Synced 12 min ago", "Synced 2h ago", "Synced yesterday", … */
 export function syncedLabel(at: number, now: number): string {
-  const ms = now - at;
-  if (ms < 60_000) return 'Synced just now';
-  if (ms < 3_600_000) return `Synced ${Math.floor(ms / 60_000)} min ago`;
-  if (ms < 86_400_000) return `Synced ${Math.floor(ms / 3_600_000)}h ago`;
-  const days = differenceInCalendarDays(now, at);
-  if (days <= 1) return 'Synced yesterday';
-  if (days < 7) return `Synced ${days} days ago`;
-  return `Synced ${relativeDay(at, now)}`;
+  return `Synced ${agoText(at, now)}`;
+}
+
+// ------------------------------------------------------------------ automatic sync (the inbox)
+
+/** An inbox import younger than this is mentioned on the Hume row ("1 new weigh-in 2h ago"). */
+export const RECENT_IMPORT_MS = 12 * 3_600_000;
+
+export interface InboxLine {
+  text: string;
+  /** A problem only the user can fix (the key or the inbox): danger colour and a "Fix in Settings" link. */
+  fix: boolean;
+}
+
+/** "1 new weigh-in", "2 new weigh-ins". */
+export const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * The status line under "Hume · auto sync", from lib/healthInbox's status. `checking` = a check is running (the
+ * hook's state, or the Check now button's own call). What only the owner can fix (the key, the inbox, a Shortcut
+ * whose posts Heft can't read) is `fix`; a passing hiccup ('error') stays muted. A plain check also says when the
+ * iPhone last posted, so a Shortcut that stopped sending doesn't read like one with nothing new to send.
+ */
+export function inboxLine(
+  status: Pick<InboxStatus, 'state' | 'checkedAt' | 'lastImport' | 'lastPostAt'>,
+  now: number,
+  checking = false,
+): InboxLine {
+  const plain = (text: string): InboxLine => ({ text, fix: false });
+  if (checking || status.state === 'checking') return plain('Checking…');
+  switch (status.state) {
+    case 'offline':
+      return plain("Offline. Heft checks again when you're back online");
+    case 'token_rejected':
+      return { text: 'GitHub key rejected', fix: true };
+    case 'not_found':
+      return { text: "Can't reach the inbox", fix: true };
+    case 'no_permission':
+      return { text: "GitHub key can't use Issues", fix: true };
+    case 'unreadable':
+      return { text: "Can't read what the Shortcut sent", fix: true };
+    case 'error':
+      return plain("Couldn't check");
+    default: {
+      // ok / idle (and 'off' with a token: nothing has run yet).
+      const imp = status.lastImport;
+      const checked = status.checkedAt;
+      if (imp && imp.added + imp.updated > 0 && now - imp.at < RECENT_IMPORT_MS) {
+        const what = imp.added > 0 ? plural(imp.added, 'new weigh-in') : `${plural(imp.updated, 'weigh-in')} updated`;
+        const head = `${what} ${agoText(imp.at, now)}`;
+        // A later check that found nothing more says so (else "1 new weigh-in just now" says it all).
+        return plain(checked != null && checked - imp.at >= 60_000 ? `${head} · checked ${agoText(checked, now)}` : head);
+      }
+      if (checked == null) return plain('Not checked yet');
+      const sent = status.lastPostAt != null ? `iPhone sent ${agoText(status.lastPostAt, now)}` : 'nothing from iPhone yet';
+      return plain(`Checked ${agoText(checked, now)} · ${sent}`);
+    }
+  }
+}
+
+// ------------------------------------------------------------------ the weigh-ins sheet
+
+/** A reading's day and time for the list: "Today, 7:02 AM", "Yesterday, 6:58 AM", "Sat, Oct 3, 7:02 AM". */
+export function readingWhen(at: number, today: string): string {
+  const day = dayKey(at);
+  const time = format(at, 'h:mm a');
+  if (day === today) return `Today, ${time}`;
+  if (day === shiftDay(today, -1)) return `Yesterday, ${time}`;
+  return format(at, 'EEE, MMM d, h:mm a');
+}
+
+/** One reading in a sentence: "184.2 lb · Oct 6, 7:02 AM", or "19.4% body fat · Oct 6, 7:02 AM" without a weight. */
+export function readingText(r: { at: number; kg: number | null; bodyFatPct: number | null }, unit: Unit): string {
+  const value = r.kg != null ? weightText(r.kg, unit) : r.bodyFatPct != null ? `${fixed1(r.bodyFatPct)}% body fat` : 'Entry';
+  return `${value} · ${format(r.at, 'MMM d, h:mm a')}`;
 }

@@ -7,6 +7,7 @@ import {
   averageIntake,
   bodySummary,
   buildWeek,
+  dailyBodyFat,
   dailyIntake,
   dailyTraining,
   dailyWeighIns,
@@ -275,7 +276,7 @@ describe('dailyWeighIns', () => {
     expect(dailyWeighIns([])).toEqual([]);
   });
 
-  it("the day's EARLIEST weight wins, whatever order the rows come in", () => {
+  it("the day's LATEST weight wins, whatever order the rows come in", () => {
     const evening = row({ date: at(2026, 10, 5, 21), kg: 82.0 });
     const morning = row({ date: at(2026, 10, 5, 7, 5), kg: 80.4 });
     const noon = row({ date: at(2026, 10, 5, 12), kg: 81.1 });
@@ -286,8 +287,23 @@ describe('dailyWeighIns', () => {
     ]) {
       const out = dailyWeighIns(order);
       expect(out).toHaveLength(1);
-      expect(out[0]).toMatchObject({ day: '2026-10-05', kg: 80.4, at: morning.date, id: morning.id });
+      expect(out[0]).toMatchObject({ day: '2026-10-05', kg: 82.0, at: evening.date, id: evening.id });
     }
+  });
+
+  it('a re-weigh on the Hume scale replaces a bad reading (every reading is its own row)', () => {
+    const bad = row({ date: at(2026, 10, 5, 7, 2), kg: 86.2, fat: 31.0, source: 'health', id: 'hk_bad' });
+    const good = row({ date: at(2026, 10, 5, 7, 5), kg: 80.1, fat: 19.4, source: 'health', id: 'hk_good' });
+    for (const order of [
+      [bad, good],
+      [good, bad],
+    ]) {
+      expect(dailyWeighIns(order)).toEqual([
+        { day: '2026-10-05', at: good.date, kg: 80.1, bodyFatPct: 19.4, source: 'health', id: 'hk_good' },
+      ]);
+    }
+    // With only the bad reading left it is the day's again: the owner deletes what is wrong.
+    expect(dailyWeighIns([bad])[0].id).toBe('hk_bad');
   });
 
   it('one weigh-in per day, oldest first, from unsorted input (without reordering the caller’s array)', () => {
@@ -301,7 +317,7 @@ describe('dailyWeighIns', () => {
     const out = dailyWeighIns(rows);
     expect(out.map((w) => [w.day, w.kg])).toEqual([
       ['2026-10-05', 80.4],
-      ['2026-10-06', 80.0],
+      ['2026-10-06', 81.0],
       ['2026-10-07', 79.8],
     ]);
     expect(rows.map((r) => r.id)).toEqual(before);
@@ -318,14 +334,19 @@ describe('dailyWeighIns', () => {
     ]);
   });
 
-  it('in the repeated hour of the fall-back day, "earliest" is by real time, not by the wall clock', () => {
+  it('in the repeated hour of the fall-back day, "latest" is by real time, not by the wall clock', () => {
     const firstPass = Date.UTC(2026, 10, 1, 5, 30); // 01:30 EDT
-    const secondPass = Date.UTC(2026, 10, 1, 6, 10); // 01:10 EST, 40 minutes later
+    const secondPass = Date.UTC(2026, 10, 1, 6, 10); // 01:10 EST, 40 minutes later (earlier on the wall clock)
     expect(new Date(firstPass).getHours()).toBe(1);
     expect(new Date(secondPass).getHours()).toBe(1);
-    const out = dailyWeighIns([row({ date: secondPass, kg: 79.0 }), row({ date: firstPass, kg: 80.0 })]);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ day: '2026-11-01', kg: 80.0, at: firstPass });
+    for (const order of [
+      [row({ date: secondPass, kg: 79.0 }), row({ date: firstPass, kg: 80.0 })],
+      [row({ date: firstPass, kg: 80.0 }), row({ date: secondPass, kg: 79.0 })],
+    ]) {
+      const out = dailyWeighIns(order);
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({ day: '2026-11-01', kg: 79.0, at: secondPass });
+    }
   });
 
   it('body fat on the weight row rides along with it', () => {
@@ -345,16 +366,27 @@ describe('dailyWeighIns', () => {
     expect(fatLater[0].bodyFatPct).toBe(23.0);
   });
 
-  it("the weight row's own body fat beats an earlier fat-only row; otherwise the day's EARLIEST fat is used", () => {
+  it("the weight row's own body fat beats any fat-only row; otherwise the day's LATEST fat is used", () => {
     const own = dailyWeighIns([row({ date: at(2026, 10, 5, 6, 50), fat: 25 }), row({ date: at(2026, 10, 5, 7), kg: 80, fat: 22 })]);
     expect(own[0].bodyFatPct).toBe(22);
+    const ownLater = dailyWeighIns([row({ date: at(2026, 10, 5, 7), kg: 80, fat: 22 }), row({ date: at(2026, 10, 5, 9), fat: 25 })]);
+    expect(ownLater[0].bodyFatPct).toBe(22);
 
-    const earliest = dailyWeighIns([
+    const latest = dailyWeighIns([
       row({ date: at(2026, 10, 5, 8), fat: 23 }),
       row({ date: at(2026, 10, 5, 7), kg: 80 }),
       row({ date: at(2026, 10, 5, 6), fat: 21 }),
     ]);
-    expect(earliest[0].bodyFatPct).toBe(21);
+    expect(latest[0].bodyFatPct).toBe(23);
+  });
+
+  it("a typed weigh-in without body fat takes the day's latest reading from the scale's rows", () => {
+    const out = dailyWeighIns([
+      row({ date: at(2026, 10, 5, 7), kg: 80.3, fat: 19.8, source: 'health', id: 'hk_1' }),
+      row({ date: at(2026, 10, 5, 7, 4), kg: 80.1, fat: 19.5, source: 'health', id: 'hk_2' }),
+      row({ date: at(2026, 10, 5, 6, 30), kg: 80, id: 'typed' }),
+    ]);
+    expect(out).toEqual([{ day: '2026-10-05', at: at(2026, 10, 5, 6, 30), kg: 80, bodyFatPct: 19.5, source: 'manual', id: 'typed' }]);
   });
 
   it("body fat never crosses into another day's weigh-in", () => {
@@ -379,10 +411,12 @@ describe('dailyWeighIns', () => {
     expect(dailyWeighIns(bad)).toEqual([]);
   });
 
-  it("an invalid earlier weight doesn't block the day's first valid one", () => {
-    const out = dailyWeighIns([row({ date: at(2026, 10, 5, 6), kg: 0 }), row({ date: at(2026, 10, 5, 8), kg: 80.6 })]);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ kg: 80.6, at: at(2026, 10, 5, 8) });
+  it("an invalid weight, earlier or later, doesn't hide the day's valid one", () => {
+    const later = dailyWeighIns([row({ date: at(2026, 10, 5, 6), kg: 80.6 }), row({ date: at(2026, 10, 5, 8), kg: 0 })]);
+    expect(later).toHaveLength(1);
+    expect(later[0]).toMatchObject({ kg: 80.6, at: at(2026, 10, 5, 6) });
+    const earlier = dailyWeighIns([row({ date: at(2026, 10, 5, 6), kg: Number.NaN }), row({ date: at(2026, 10, 5, 8), kg: 80.6 })]);
+    expect(earlier[0]).toMatchObject({ kg: 80.6, at: at(2026, 10, 5, 8) });
   });
 
   it('invalid body fat (0, ≥ 100, negative, NaN) reads as none, and a valid fat-only row can still fill in', () => {
@@ -392,6 +426,9 @@ describe('dailyWeighIns', () => {
     expect(dailyWeighIns([row({ date: at(2026, 10, 5), kg: 80, fat: 99.9 })])[0].bodyFatPct).toBe(99.9);
     const filled = dailyWeighIns([row({ date: at(2026, 10, 5, 7), kg: 80, fat: 100 }), row({ date: at(2026, 10, 5, 9), fat: 21.5 })]);
     expect(filled[0].bodyFatPct).toBe(21.5);
+    // A later junk reading doesn't hide an earlier valid one.
+    const junkLater = dailyWeighIns([row({ date: at(2026, 10, 5, 6), fat: 21.5 }), row({ date: at(2026, 10, 5, 7), kg: 80, fat: 0 })]);
+    expect(junkLater[0].bodyFatPct).toBe(21.5);
   });
 
   it('rows with a non-finite date are skipped instead of throwing', () => {
@@ -399,8 +436,8 @@ describe('dailyWeighIns', () => {
     expect(out.map((w) => w.kg)).toEqual([80]);
   });
 
-  it('source: health stays health, manual or missing is manual, and a typed weigh-in beats an earlier Health one', () => {
-    // Manual wins, like planHealthImport: a typed 7:00 reading beats the scale's 6:30 one on the same day.
+  it('source: health stays health, manual or missing is manual, and a typed weigh-in beats the scale’s, earlier or later', () => {
+    // A typed 7:00 reading beats the scale's 6:30 one on the same day.
     const healthFirst = dailyWeighIns([
       row({ date: at(2026, 10, 5, 7), kg: 80, source: 'manual', id: 'typed' }),
       row({ date: at(2026, 10, 5, 6, 30), kg: 80.3, source: 'health', id: 'hk_1' }),
@@ -413,15 +450,51 @@ describe('dailyWeighIns', () => {
     ]);
     expect(manualFirst[0]).toMatchObject({ source: 'manual', id: 'typed', kg: 80 });
 
-    // Nothing typed: the earliest Health row still wins.
+    // Nothing typed: the LATEST Health row wins (a re-weigh replaces the reading before it).
     const healthOnly = dailyWeighIns([
       row({ date: at(2026, 10, 5, 7), kg: 80.6, source: 'health', id: 'hk_b' }),
       row({ date: at(2026, 10, 5, 6, 30), kg: 80.3, source: 'health', id: 'hk_a' }),
     ]);
     expect(healthOnly).toHaveLength(1);
-    expect(healthOnly[0]).toMatchObject({ source: 'health', id: 'hk_a', kg: 80.3 });
+    expect(healthOnly[0]).toMatchObject({ source: 'health', id: 'hk_b', kg: 80.6 });
+
+    // An imported row the user edited is theirs ('manual'): it beats a later reading from the scale.
+    const edited = dailyWeighIns([
+      row({ date: at(2026, 10, 5, 6, 30), kg: 80.0, source: 'manual', id: 'hk_1' }),
+      row({ date: at(2026, 10, 5, 7), kg: 80.6, source: 'health', id: 'hk_2' }),
+    ]);
+    expect(edited[0]).toMatchObject({ source: 'manual', id: 'hk_1', kg: 80.0 });
 
     expect(dailyWeighIns([row({ date: at(2026, 10, 5), kg: 80 })])[0].source).toBe('manual');
+  });
+});
+
+describe('dailyBodyFat', () => {
+  it("the weigh-in's own reading on a weigh-in day, else the day's latest reading", () => {
+    const rows = [
+      // 4 Oct: no weigh-in, two caliper readings: the later one.
+      row({ date: at(2026, 10, 4, 8), fat: 21 }),
+      row({ date: at(2026, 10, 4, 18), fat: 20.5 }),
+      // 5 Oct: two scale readings; the re-weigh is the day's, with its own body fat.
+      row({ date: at(2026, 10, 5, 7, 2), kg: 86, fat: 31, source: 'health' }),
+      row({ date: at(2026, 10, 5, 7, 5), kg: 80, fat: 19.4, source: 'health' }),
+      // 6 Oct: the weigh-in has no body fat; the day's latest reading fills in.
+      row({ date: at(2026, 10, 6, 6), fat: 19.9 }),
+      row({ date: at(2026, 10, 6, 7), kg: 80 }),
+      row({ date: at(2026, 10, 6, 9), fat: 19.6 }),
+    ];
+    expect(dailyBodyFat(rows)).toEqual([
+      { day: '2026-10-04', value: 20.5 },
+      { day: '2026-10-05', value: 19.4 },
+      { day: '2026-10-06', value: 19.6 },
+    ]);
+    // The same numbers dailyWeighIns carries.
+    expect(dailyWeighIns(rows).map((w) => w.bodyFatPct)).toEqual([19.4, 19.6]);
+  });
+
+  it('a typed weigh-in’s own body fat beats a later scale reading', () => {
+    const rows = [row({ date: at(2026, 10, 5, 6), kg: 80, fat: 18 }), row({ date: at(2026, 10, 5, 7), kg: 80.4, fat: 19.4, source: 'health' })];
+    expect(dailyBodyFat(rows)).toEqual([{ day: '2026-10-05', value: 18 }]);
   });
 });
 
@@ -688,10 +761,12 @@ describe('bodySummary', () => {
       [row({ date: onDay('2026-10-05'), kg: 81 }), row({ date: onDay('2026-10-04'), kg: 80 }), row({ date: onDay('2026-10-05', 20), kg: 83 })],
       TODAY,
     );
-    expect(s.weighIns.map((w) => w.kg)).toEqual([80, 81]);
+    // 5 Oct has two readings: the later one (20:00) is the day's.
+    expect(s.weighIns.map((w) => w.kg)).toEqual([80, 83]);
     expect(s.trend).toHaveLength(2);
-    expect(s.latest?.kg).toBe(81);
-    expect(s.trendKg).toBeCloseTo(80.1, 12);
+    expect(s.latest?.kg).toBe(83);
+    expect(s.latest?.at).toBe(onDay('2026-10-05', 20));
+    expect(s.trendKg).toBeCloseTo(80.3, 12);
     expect(s.daysSinceWeighIn).toBe(1);
   });
 

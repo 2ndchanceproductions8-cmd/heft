@@ -81,6 +81,21 @@ export function isAppleMobile(): boolean {
 }
 
 /**
+ * The open Safari tab on an iPhone, not the installed app: its storage is separate, so a key saved here is lost and its
+ * checks would take the inbox posts into the wrong database.
+ */
+export function inSafariTab(): boolean {
+  if (typeof window === 'undefined' || !isAppleMobile()) return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  if (nav.standalone === true) return false;
+  try {
+    return !window.matchMedia('(display-mode: standalone)').matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Open the Shortcut with this workout and remember that it was sent. Must be called from a tap handler
  * (iOS only follows app links that come from a user gesture).
  */

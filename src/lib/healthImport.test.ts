@@ -1,17 +1,21 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../db';
-import type { Measurement } from '../types';
+import type { Measurement, Settings } from '../types';
 import {
   applyHealthImport,
+  deleteMeasurement,
   editedMeasurement,
+  groupWeighIns,
   HEALTH_IMPORT_SHORTCUT,
+  HEALTH_PASTE_INPUT,
   healthTemplateText,
   importShortcutUrl,
   parseHealthDate,
   parseHealthText,
   planHealthImport,
   type HealthPlanOptions,
+  type HealthSample,
 } from './healthImport';
 import { currentBodyweightKg, getSettings, updateSettings } from './settings';
 import { exportBackup, importBackup } from './backup';
@@ -108,9 +112,47 @@ describe('parseHealthText: the Shortcut template', () => {
     ]);
   });
 
-  it('a missing date means now', () => {
+  it('a value without a date is dropped with an error (never dated now: every sync would add it again)', () => {
     const r = parse(lines('heft-health', 'weight: 184.2 lb', 'body fat: 18.5%'));
-    expect(r.samples.map((s) => s.at)).toEqual([NOW, NOW]);
+    expect(r.recognized).toBe(true);
+    expect(r.samples).toEqual([]);
+    expect(r.errors).toEqual(['The weight "184.2 lb" has no date', 'The body fat "18.5%" has no date']);
+    // Date lines that came back empty are no dates either.
+    const blank = parse(lines('heft-health', 'weight: 184.2 lb', 'weight date: ', 'body fat: 18.5%', 'body fat date: '));
+    expect(blank.samples).toEqual([]);
+    expect(blank.errors.filter((e) => e.includes('has no date'))).toHaveLength(2);
+  });
+
+  it('values and dates that are lists of different lengths are not paired', () => {
+    const r = parse(
+      lines(
+        'heft-health',
+        'weight: 184.2 lb',
+        '185.0 lb',
+        '186.4 lb',
+        'weight date: Oct 5, 2026 at 7:02 AM',
+        'Oct 4, 2026 at 6:58 AM',
+        'body fat: 18.5%',
+        'body fat date: Oct 5, 2026 at 7:02 AM',
+      ),
+    );
+    expect(r.errors).toEqual(['3 weight values but 2 dates']);
+    expect(r.samples).toEqual([{ kind: 'bodyFat', value: 18.5, at: T702 }]);
+  });
+
+  it("a JSON sample record's start date is its date (its end date doesn't make the lists uneven)", () => {
+    const r = parseHealthText(
+      JSON.stringify({
+        type: 'HKQuantityTypeIdentifierBodyMass',
+        value: 83.5,
+        unit: 'kg',
+        startDate: '2026-10-05T07:02:00',
+        endDate: '2026-10-05T07:02:30',
+      }),
+      { unit: 'lb', now: NOW },
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.samples).toEqual([{ kind: 'weight', value: 83.5, at: T702 }]);
   });
 
   it('an empty template (no samples found) is recognized but has no samples', () => {
@@ -229,8 +271,43 @@ describe('parseHealthText: values a review found misread', () => {
     }
     // A mass unit is never body fat, even after the marker; the generic key still works with the marker.
     expect(parse(lines('heft-health', 'fat: 12 g')).errors[0]).toMatch(/Couldn't read the body fat/);
-    expect(parse(lines('heft-health', 'fat: 18.5%')).samples).toEqual([{ kind: 'bodyFat', value: 18.5, at: NOW }]);
-    expect(parse(JSON.stringify({ 'heft-health': true, fat: 18.5 })).samples).toEqual([{ kind: 'bodyFat', value: 18.5, at: NOW }]);
+    expect(parse(lines('heft-health', 'fat: 18.5%', 'date: Oct 5, 2026 at 7:02 AM')).samples).toEqual([
+      { kind: 'bodyFat', value: 18.5, at: T702 },
+    ]);
+    expect(parse(JSON.stringify({ 'heft-health': true, fat: 18.5, fatDate: '2026-10-05T07:02:00' })).samples).toEqual([
+      { kind: 'bodyFat', value: 18.5, at: T702 },
+    ]);
+  });
+
+  it('an odd post (deeply nested JSON, a huge number) returns quickly with short errors', () => {
+    for (const depth of [2000, 32000]) {
+      const nested = '{"app":"heft-health","weight":' + '['.repeat(depth) + ']'.repeat(depth) + '}';
+      const r = parse(nested);
+      expect(r.recognized).toBe(true);
+      expect(r.samples).toEqual([]);
+    }
+    const huge = '1'.repeat(60000);
+    for (const text of [
+      'heft-health\nweight: ' + huge,
+      'heft-health\nweight' + ' '.repeat(60000) + 'x',
+      JSON.stringify({ app: 'heft-health', weight: huge, weightDate: '2026-10-05T07:02:00' }),
+      JSON.stringify({ app: 'heft-health', weight: '184.2 lb', weightDate: huge }),
+    ]) {
+      const start = performance.now();
+      const r = parse(text);
+      expect(performance.now() - start).toBeLessThan(250); // unguarded: seconds on a phone
+      expect(r.recognized).toBe(true);
+      expect(r.samples).toEqual([]);
+      for (const e of r.errors) expect(e.length).toBeLessThan(200);
+    }
+    expect(parse(JSON.stringify({ app: 'heft-health', weight: huge, weightDate: '2026-10-05T07:02:00' })).errors).toEqual([
+      `Couldn't read the weight "${'1'.repeat(40)}"`,
+    ]);
+    // The Shortcut's own text is read as before.
+    expect(parse(TEMPLATE).samples).toEqual([
+      { kind: 'weight', value: LB(184.2), at: T702 },
+      { kind: 'bodyFat', value: 18.5, at: T702 },
+    ]);
   });
 
   it('reports a line that came back empty (the second Find Health Samples filtering the first)', () => {
@@ -304,18 +381,19 @@ describe('parseHealthDate', () => {
 });
 
 describe('shortcut constants', () => {
-  it('runs the "Health to Heft" Shortcut without any return URL', () => {
+  it('runs the "Health to Heft" Shortcut without any return URL, telling it to copy for a paste', () => {
     expect(HEALTH_IMPORT_SHORTCUT).toBe('Health to Heft');
-    expect(importShortcutUrl()).toBe('shortcuts://run-shortcut?name=Health%20to%20Heft');
+    expect(HEALTH_PASTE_INPUT).toBe('paste');
+    expect(importShortcutUrl()).toBe('shortcuts://run-shortcut?name=Health%20to%20Heft&input=text&text=paste');
   });
 });
 
 // ------------------------------------------------------------------ planning + saving (Dexie)
 
-async function importText(text: string, opts: HealthPlanOptions = {}) {
-  const parsed = parse(text);
-  const settings = await getSettings();
-  const plan = planHealthImport(parsed.samples, await db.measurements.toArray(), settings, opts);
+async function importText(text: string, opts: HealthPlanOptions = {}, now = NOW) {
+  const parsed = parseHealthText(text, { unit: 'lb', now });
+  expect(parsed.errors).toEqual([]);
+  const plan = planHealthImport(parsed.samples, await db.measurements.toArray(), await getSettings(), opts);
   await applyHealthImport(plan);
   return plan;
 }
@@ -328,9 +406,35 @@ const weighIn = (date: string, lb: number, fat?: number, fatDate = date) =>
     ...(fat == null ? [] : [`body fat: ${fat}%`, `body fat date: ${fatDate}`]),
   );
 
+/** Local Oct `d` 2026 at h:m. */
+const at = (h: number, m: number, d = 5) => new Date(2026, 9, d, h, m).getTime();
+const ids = async () => (await db.measurements.toArray()).map((m) => m.id).sort();
+
+describe('groupWeighIns', () => {
+  const w = (t: number, value = 83): HealthSample => ({ kind: 'weight', value, at: t });
+  const f = (t: number, value = 18): HealthSample => ({ kind: 'bodyFat', value, at: t });
+
+  it('every weight is a weigh-in; body fat joins the NEAREST weight within 10 minutes; a reading left over stands alone', () => {
+    const samples = [w(at(7, 0)), w(at(7, 5)), f(at(7, 4)), f(at(7, 40)), w(at(9, 0)), f(at(9, 0)), f(at(9, 12))];
+    expect(groupWeighIns(samples)).toEqual([
+      { at: at(7, 0), weight: w(at(7, 0)) },
+      { at: at(7, 5), weight: w(at(7, 5)), bodyFat: f(at(7, 4)) },
+      { at: at(7, 40), bodyFat: f(at(7, 40)) },
+      { at: at(9, 0), weight: w(at(9, 0)), bodyFat: f(at(9, 0)) },
+      { at: at(9, 12), bodyFat: f(at(9, 12)) },
+    ]);
+  });
+
+  it('keeps one sample per instant and drops broken ones', () => {
+    expect(groupWeighIns([w(at(7, 0), 83), w(at(7, 0), 90), w(NaN), f(at(7, 0), Infinity)])).toEqual([
+      { at: at(7, 0), weight: w(at(7, 0), 83) },
+    ]);
+  });
+});
+
 describe('planHealthImport + applyHealthImport', () => {
   beforeEach(async () => {
-    await Promise.all([db.measurements.clear(), db.settings.clear()]);
+    await Promise.all([db.measurements.clear(), db.settings.clear(), db.media.clear()]);
   });
 
   it('creates one hk_ row and re-importing is a no-op (same ids, same count)', async () => {
@@ -347,14 +451,15 @@ describe('planHealthImport + applyHealthImport', () => {
       expect(again.update).toEqual([]);
       expect(again.skipped).toEqual([{ reason: 'unchanged', at: T702 }]);
     }
-    expect((await db.measurements.toArray()).map((m) => m.id)).toEqual(['hk_' + T702]);
-    // Even with the watermark ignored nothing is duplicated.
+    expect(await ids()).toEqual(['hk_' + T702]);
+    // Bringing deleted weigh-ins back duplicates nothing either.
     const all = await importText(TEMPLATE, { reimportAll: true });
     expect(all.add).toEqual([]);
+    expect(all.clearDeleted).toEqual([]);
     expect(await db.measurements.count()).toBe(1);
   });
 
-  it('sets the watermark and the import time without touching the profile weight', async () => {
+  it('records the newest sample and the import time without touching the profile weight', async () => {
     await updateSettings({ bodyweightKg: 90, bodyweightUpdatedAt: T702 - DAY });
     const before = Date.now();
     await importText(TEMPLATE);
@@ -363,8 +468,9 @@ describe('planHealthImport + applyHealthImport', () => {
     expect(s.healthImportedAt).toBeGreaterThanOrEqual(before);
     expect(s.bodyweightKg).toBe(90);
     expect(s.bodyweightUpdatedAt).toBe(T702 - DAY);
-    // An older paste never moves the watermark back.
-    await importText(weighIn('Oct 1, 2026 at 7:00 AM', 186), { reimportAll: true });
+    // An older weigh-in comes in (it is new to Heft) but never moves the newest sample back.
+    const older = await importText(weighIn('Oct 1, 2026 at 7:00 AM', 186));
+    expect(older.add.map((m) => m.id)).toEqual(['hk_' + at(7, 0, 1)]);
     expect((await getSettings()).healthImportedThrough).toBe(T702);
   });
 
@@ -376,36 +482,247 @@ describe('planHealthImport + applyHealthImport', () => {
     expect(plan.update.map((m) => m.id)).toEqual(['hk_' + T702]);
     expect((await db.measurements.get('hk_' + T702))?.bodyFatPct).toBe(18.5);
     expect(await db.measurements.count()).toBe(1);
+    // A paste whose body fat line came back empty never clears the body fat Heft has.
+    const empty = await importText(lines(weighIn('Oct 5, 2026 at 7:02 AM', 184.2), 'body fat: ', 'body fat date: '));
+    expect(empty.skipped).toEqual([{ reason: 'unchanged', at: T702 }]);
+    expect((await db.measurements.get('hk_' + T702))?.bodyFatPct).toBe(18.5);
   });
 
-  it('a same-day weigh-in typed in Heft wins: the whole day is skipped and counted', async () => {
-    const mine: Measurement = { id: 'm1', date: new Date(2026, 9, 5, 6, 30).getTime(), bodyweightKg: 84, photoIds: [] };
-    await db.measurements.put(mine);
-    const plan = await importText(TEMPLATE);
-    expect(plan.add).toEqual([]);
-    expect(plan.update).toEqual([]);
-    expect(plan.skipped).toEqual([{ reason: 'manual', at: T702 }]);
-    expect(await db.measurements.toArray()).toEqual([mine]);
+  it('two weigh-ins the same day are two rows (a bad reading and the re-weigh, and the evening one)', async () => {
+    const text = lines(
+      'heft-health',
+      'weight: 186.0 lb',
+      '184.2 lb',
+      '190.4 lb',
+      'weight date: Oct 5, 2026 at 6:30 PM',
+      'Oct 5, 2026 at 7:06 AM',
+      'Oct 5, 2026 at 7:02 AM',
+      'body fat: 18.9%',
+      '18.5%',
+      '22.1%',
+      'body fat date: Oct 5, 2026 at 6:30 PM',
+      'Oct 5, 2026 at 7:06 AM',
+      'Oct 5, 2026 at 7:02 AM',
+    );
+    const plan = await importText(text, {}, at(20, 0));
+    expect(plan.add.map((m) => [m.id, m.bodyFatPct])).toEqual([
+      ['hk_' + T702, 22.1],
+      ['hk_' + at(7, 6), 18.5],
+      ['hk_' + at(18, 30), 18.9],
+    ]);
+    expect(plan.add[0].bodyweightKg).toBeCloseTo(LB(190.4), 9);
+    expect(plan.importedThrough).toBe(at(18, 30));
+    expect(await db.measurements.count()).toBe(3);
+
+    const again = await importText(text, {}, at(20, 0));
+    expect(again.add).toEqual([]);
+    expect(again.update).toEqual([]);
+    expect(again.skipped.map((s) => s.reason)).toEqual(['unchanged', 'unchanged', 'unchanged']);
   });
 
-  it('a same-day entry without a body weight (tape measurements) does not block the import', async () => {
-    await db.measurements.put({ id: 'tape', date: new Date(2026, 9, 5, 20, 0).getTime(), waistCm: 84, photoIds: [] });
+  it('a weigh-in typed in Heft the same day blocks nothing and is never touched', async () => {
+    const mine: Measurement = { id: 'm1', date: at(6, 30), bodyweightKg: 84, bodyFatPct: 20, photoIds: [] };
+    const tape: Measurement = { id: 'tape', date: at(20, 0), waistCm: 84, photoIds: [] };
+    await db.measurements.bulkPut([mine, tape]);
     const plan = await importText(TEMPLATE);
     expect(plan.add.map((m) => m.id)).toEqual(['hk_' + T702]);
+    expect(plan.update).toEqual([]);
+    expect(plan.skipped).toEqual([]);
+    expect(await db.measurements.get('m1')).toEqual(mine);
+    expect(await db.measurements.get('tape')).toEqual(tape);
   });
 
-  it('a deleted imported row is not resurrected (watermark), unless re-importing everything', async () => {
+  it('a deleted weigh-in never comes back', async () => {
     await importText(TEMPLATE);
-    await db.measurements.delete('hk_' + T702);
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    expect(await db.measurements.count()).toBe(0);
+    expect((await getSettings()).healthDeleted).toEqual([T702]);
+    const settingsBefore = await db.settings.get('settings');
+
     const plan = await importText(TEMPLATE);
     expect(plan.add).toEqual([]);
-    expect(plan.skipped).toEqual([{ reason: 'old', at: T702 }]);
+    expect(plan.skipped).toEqual([{ reason: 'deleted', at: T702 }]);
     expect(await db.measurements.count()).toBe(0);
-    const back = await importText(TEMPLATE, { reimportAll: true });
-    expect(back.add.map((m) => m.id)).toEqual(['hk_' + T702]);
+    // Nothing-new imports leave the settings alone.
+    expect(await db.settings.get('settings')).toEqual(settingsBefore);
   });
 
-  it('an imported row the user edited (source manual) is never overwritten', async () => {
+  it('"Bring deleted weigh-ins back" restores them and lifts only their tombstones', async () => {
+    const oct4 = weighIn('Oct 4, 2026 at 7:00 AM', 185, 18.9);
+    await importText(oct4);
+    await importText(TEMPLATE);
+    for (const m of await db.measurements.toArray()) await deleteMeasurement(m);
+    expect((await getSettings()).healthDeleted).toEqual([at(7, 0, 4), T702]);
+
+    const preview = await importText(TEMPLATE, { reimportAll: true });
+    expect(preview.add.map((m) => m.id)).toEqual(['hk_' + T702]);
+    expect(preview.clearDeleted).toEqual([T702]);
+    expect(await ids()).toEqual(['hk_' + T702]);
+    // Oct 4 wasn't in that paste: it stays deleted.
+    expect((await getSettings()).healthDeleted).toEqual([at(7, 0, 4)]);
+    expect((await importText(TEMPLATE)).skipped).toEqual([{ reason: 'unchanged', at: T702 }]);
+    expect((await importText(oct4)).skipped).toEqual([{ reason: 'deleted', at: at(7, 0, 4) }]);
+  });
+
+  it('a re-weigh minutes after a deleted bad reading still comes in; the bad one stays out', async () => {
+    const bad = weighIn('Oct 5, 2026 at 7:02 AM', 192.6, 23.5);
+    await importText(bad);
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    // The next sync sends both: the bad reading (still in Apple Health) and the re-weigh 4 minutes later.
+    const both = lines(
+      'heft-health',
+      'weight: 184.2 lb',
+      '192.6 lb',
+      'weight date: Oct 5, 2026 at 7:06 AM',
+      'Oct 5, 2026 at 7:02 AM',
+      'body fat: 18.5%',
+      '23.5%',
+      'body fat date: Oct 5, 2026 at 7:06 AM',
+      'Oct 5, 2026 at 7:02 AM',
+    );
+    const plan = await importText(both);
+    expect(plan.skipped).toEqual([{ reason: 'deleted', at: T702 }]);
+    expect(plan.add.map((m) => m.id)).toEqual(['hk_' + at(7, 6)]);
+    expect(await ids()).toEqual(['hk_' + at(7, 6)]);
+    expect(await currentBodyweightKg()).toBeCloseTo(LB(184.2), 9);
+
+    // Both already in Heft when the bad one is deleted: same result, nothing else moves.
+    await db.measurements.clear();
+    await db.settings.clear();
+    await importText(both);
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    const again = await importText(both);
+    expect(again.skipped).toEqual([
+      { reason: 'deleted', at: T702 },
+      { reason: 'unchanged', at: at(7, 6) },
+    ]);
+    expect(again.add).toEqual([]);
+    expect(again.update).toEqual([]);
+  });
+
+  it('a re-weigh minutes after a deleted bad reading comes in when the bad one is gone from Apple Health too', async () => {
+    await importText(weighIn('Oct 5, 2026 at 7:02 AM', 192.6, 23.5));
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    // The bad 7:02 reading was also deleted in Hume / Apple Health: the next sync has only the re-weigh.
+    const reweigh = weighIn('Oct 5, 2026 at 7:06 AM', 184.2, 18.5);
+    const plan = await importText(reweigh);
+    expect(plan.add.map((m) => m.id)).toEqual(['hk_' + at(7, 6)]);
+    expect(plan.skipped).toEqual([]);
+    expect(await ids()).toEqual(['hk_' + at(7, 6)]);
+    // Every later sync too.
+    expect((await importText(reweigh)).skipped).toEqual([{ reason: 'unchanged', at: at(7, 6) }]);
+    expect((await getSettings()).healthDeleted).toEqual([T702]);
+  });
+
+  it("a deleted weigh-in's body fat arriving alone stays out; the re-weigh beside it comes in", async () => {
+    await importText(weighIn('Oct 5, 2026 at 7:02 AM', 192.6, 23.5));
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    // Only the bad reading's weight was deleted from Apple Health: its 7:02 body fat comes alone.
+    const plan = await importText(
+      lines(
+        'heft-health',
+        'weight: 184.2 lb',
+        'weight date: Oct 5, 2026 at 7:06 AM',
+        'body fat: 18.5%',
+        '23.5%',
+        'body fat date: Oct 5, 2026 at 7:06 AM',
+        'Oct 5, 2026 at 7:02 AM',
+      ),
+    );
+    expect(plan.skipped).toEqual([{ reason: 'deleted', at: T702 }]);
+    expect(plan.add.map((m) => [m.id, m.bodyFatPct])).toEqual([['hk_' + at(7, 6), 18.5]]);
+    expect(await ids()).toEqual(['hk_' + at(7, 6)]);
+  });
+
+  it("a weigh-in's body fat paired with an earlier weight moves to its own weight when that syncs", async () => {
+    // 7:00: a weight with no body fat. 7:05: the next weigh-in's body fat reaches Apple Health before its weight.
+    await importText(weighIn('Oct 5, 2026 at 7:00 AM', 184.2));
+    const early = await importText(weighIn('Oct 5, 2026 at 7:00 AM', 184.2, 19.4, 'Oct 5, 2026 at 7:05 AM'));
+    expect(early.update.map((m) => [m.id, m.bodyFatPct])).toEqual([['hk_' + at(7, 0), 19.4]]);
+    // The 7:05 weight is in: the body fat is its, and leaves the 7:00 row.
+    const both = lines(
+      'heft-health',
+      'weight: 184.2 lb',
+      '183.9 lb',
+      'weight date: Oct 5, 2026 at 7:00 AM',
+      'Oct 5, 2026 at 7:05 AM',
+      'body fat: 19.4%',
+      'body fat date: Oct 5, 2026 at 7:05 AM',
+    );
+    const plan = await importText(both);
+    expect(plan.add.map((m) => [m.id, m.bodyFatPct])).toEqual([['hk_' + at(7, 5), 19.4]]);
+    expect(plan.update.map((m) => [m.id, m.bodyFatPct])).toEqual([['hk_' + at(7, 0), null]]);
+    expect((await db.measurements.get('hk_' + at(7, 0)))?.bodyFatPct).toBeNull();
+    expect((await db.measurements.get('hk_' + at(7, 0)))?.bodyweightKg).toBeCloseTo(LB(184.2), 9);
+    const own = (await db.measurements.get('hk_' + at(7, 5)))!;
+    expect(own.bodyFatPct).toBe(19.4);
+    expect(own.bodyweightKg).toBeCloseTo(LB(183.9), 9);
+    // Settled: the next sync changes nothing.
+    const again = await importText(both);
+    expect(again.update).toEqual([]);
+    expect(again.add).toEqual([]);
+    expect(again.skipped.map((s) => s.reason)).toEqual(['unchanged', 'unchanged']);
+  });
+
+  it("a deleted weigh-in never takes over another weigh-in's body-fat-only row", async () => {
+    // A 7:00 weight with the 6:57 body fat, and the 7:05 body fat on its own.
+    await importText(
+      lines(
+        'heft-health',
+        'weight: 83.4 kg',
+        'weight date: Oct 5, 2026 at 7:00 AM',
+        'body fat: 19%',
+        '18.5%',
+        'body fat date: Oct 5, 2026 at 6:57 AM',
+        'Oct 5, 2026 at 7:05 AM',
+      ),
+    );
+    expect(await ids()).toEqual(['hk_' + at(7, 0), 'hk_' + at(7, 5)]);
+    await deleteMeasurement((await db.measurements.get('hk_' + at(7, 0)))!);
+    const has834 = async () => (await db.measurements.toArray()).some((m) => m.bodyweightKg != null && Math.abs(m.bodyweightKg - 83.4) < 1e-6);
+
+    // A 6:57 weight syncs and takes the 6:57 body fat; the deleted 7:00 weight now pairs with the 7:05 body fat.
+    const sync = [
+      'heft-health',
+      'weight: 81.9 kg',
+      '83.4 kg',
+      'weight date: Oct 5, 2026 at 6:57 AM',
+      'Oct 5, 2026 at 7:00 AM',
+      'body fat: 19%',
+      '18.5%',
+      'body fat date: Oct 5, 2026 at 6:57 AM',
+      'Oct 5, 2026 at 7:05 AM',
+    ];
+    const plan = await importText(lines(...sync));
+    expect(plan.skipped).toEqual([{ reason: 'deleted', at: at(7, 0) }]);
+    expect(plan.update).toEqual([]);
+    expect(plan.add.map((m) => m.id)).toEqual(['hk_' + at(6, 57)]);
+    expect(await has834()).toBe(false);
+    expect(await db.measurements.get('hk_' + at(7, 5))).toMatchObject({ bodyweightKg: null, bodyFatPct: 18.5, healthAt: at(7, 5) });
+
+    // The 7:05 weight syncs: it joins its body fat's row.
+    const withWeight = lines(
+      'heft-health',
+      'weight: 81.9 kg',
+      '83.4 kg',
+      '82.0 kg',
+      'weight date: Oct 5, 2026 at 6:57 AM',
+      'Oct 5, 2026 at 7:00 AM',
+      'Oct 5, 2026 at 7:05 AM',
+      'body fat: 19%',
+      '18.5%',
+      'body fat date: Oct 5, 2026 at 6:57 AM',
+      'Oct 5, 2026 at 7:05 AM',
+    );
+    const joined = await importText(withWeight);
+    expect(joined.add).toEqual([]);
+    expect(joined.update.map((m) => m.id)).toEqual(['hk_' + at(7, 5)]);
+    expect(await has834()).toBe(false);
+    expect(await ids()).toEqual(['hk_' + at(6, 57), 'hk_' + at(7, 5)]);
+    expect(await db.measurements.get('hk_' + at(7, 5))).toMatchObject({ bodyweightKg: 82, bodyFatPct: 18.5, healthAt: at(7, 5) });
+  });
+
+  it('an imported row the user edited is never overwritten, and deleting it sticks too', async () => {
     await importText(TEMPLATE);
     const row = (await db.measurements.get('hk_' + T702))!;
     // What MeasurementSheet saves when the user corrects the weight.
@@ -417,41 +734,63 @@ describe('planHealthImport + applyHealthImport', () => {
       const plan = await importText(weighIn('Oct 5, 2026 at 7:02 AM', 190, 20), opts);
       expect(plan.add).toEqual([]);
       expect(plan.update).toEqual([]);
-      expect(plan.skipped.map((s) => s.reason)).toEqual(['manual']);
+      expect(plan.skipped).toEqual([{ reason: 'edited', at: T702 }]);
     }
-    // Even with no weight left on it, the edited row keeps its id to itself.
+    // Even with no weight left on it, the edited row keeps its weigh-in to itself.
     await db.measurements.put({ ...edited, bodyweightKg: null, bodyFatPct: null, waistCm: 84 });
-    const plan = await importText(TEMPLATE, { reimportAll: true });
-    expect(plan.skipped.map((s) => s.reason)).toEqual(['edited']);
-    expect((await db.measurements.get(row.id))?.waistCm).toBe(84);
+    expect((await importText(TEMPLATE, { reimportAll: true })).skipped.map((s) => s.reason)).toEqual(['edited']);
+    expect(await db.measurements.get(row.id)).toMatchObject({ waistCm: 84, bodyweightKg: null });
+
+    await deleteMeasurement((await db.measurements.get(row.id))!);
+    expect((await importText(TEMPLATE)).skipped).toEqual([{ reason: 'deleted', at: T702 }]);
   });
 
-  it('keeps the earliest weigh-in of a day; a later one only fills what is missing', async () => {
-    const plan = await importText(
-      lines(
-        'heft-health',
-        'weight: 186 lb',
-        'weight date: Oct 5, 2026 at 6:00 PM',
-        'weight: 184.2 lb',
-        'weight date: Oct 5, 2026 at 7:02 AM',
-      ),
-    );
-    expect(plan.add.map((m) => m.id)).toEqual(['hk_' + T702]);
-    expect(plan.add[0].bodyweightKg).toBeCloseTo(LB(184.2), 9);
+  it('a weight that reaches Apple Health after its body fat joins the body-fat-only row', async () => {
+    const T701 = T702 - MIN;
+    // Paste 1: the newest Weight is still yesterday's, the newest Body Fat is this morning's.
+    const first = await importText(weighIn('Oct 4, 2026 at 7:00 AM', 185, 18.5, 'Oct 5, 2026 at 7:02 AM'));
+    expect(first.add.map((m) => [m.id, m.bodyweightKg == null, m.bodyFatPct])).toEqual([
+      ['hk_' + at(7, 0, 4), false, null],
+      ['hk_' + T702, true, 18.5],
+    ]);
 
-    const later = await importText(weighIn('Oct 5, 2026 at 6:30 PM', 186.5, 19.2));
-    // The evening body fat fills the morning row (it had none); the evening weight is not imported.
-    expect(later.update).toHaveLength(1);
-    expect(later.update[0]).toMatchObject({ id: 'hk_' + T702, bodyFatPct: 19.2 });
-    expect(later.update[0].bodyweightKg).toBeCloseTo(LB(184.2), 9);
+    // Paste 2: this morning's weight is in, timed in the minute before its body fat.
+    const today = weighIn('Oct 5, 2026 at 7:01 AM', 184.2, 18.5, 'Oct 5, 2026 at 7:02 AM');
+    const second = await importText(today);
+    expect(second.skipped).toEqual([]);
+    expect(second.add).toEqual([]);
+    expect(second.update.map((m) => m.id)).toEqual(['hk_' + T702]);
+    const row = (await db.measurements.get('hk_' + T702))!;
+    expect(row).toMatchObject({ date: T701, healthAt: T701, bodyFatPct: 18.5, source: 'health' });
+    expect(row.bodyweightKg).toBeCloseTo(LB(184.2), 9);
+    expect(await db.measurements.count()).toBe(2);
+    expect(await currentBodyweightKg()).toBeCloseTo(LB(184.2), 9);
 
-    const again = await importText(weighIn('Oct 5, 2026 at 6:45 PM', 186.1, 19.0));
-    expect(again.update).toEqual([]);
-    expect(again.skipped.map((s) => s.reason)).toEqual(['later']);
-    expect(await db.measurements.count()).toBe(1);
+    expect((await importText(today)).skipped).toEqual([{ reason: 'unchanged', at: T701 }]);
+    // Deleted, the joined weigh-in stays deleted (by its weight's time and by its body fat's).
+    await deleteMeasurement(row);
+    expect((await getSettings()).healthDeleted).toEqual([T701]);
+    expect((await importText(today)).skipped).toEqual([{ reason: 'deleted', at: T701 }]);
+    expect((await importText(weighIn('Oct 4, 2026 at 7:00 AM', 185, 18.5, 'Oct 5, 2026 at 7:02 AM'))).skipped).toEqual([
+      { reason: 'unchanged', at: at(7, 0, 4) },
+      { reason: 'deleted', at: T702 },
+    ]);
   });
 
-  it('attaches body fat measured within 10 minutes, else the day’s earliest; body fat alone makes its own row', async () => {
+  it('the other half of a weigh-in joins its row only when they agree; another weight is its own row', async () => {
+    await importText(weighIn('Oct 5, 2026 at 7:02 AM', 184.2));
+    // Only the body fat this time (timed 3 minutes later): it fills the weight's row.
+    const fat = await importText(lines('heft-health', 'body fat: 18.5%', 'body fat date: Oct 5, 2026 at 7:05 AM'));
+    expect(fat.add).toEqual([]);
+    expect(fat.update.map((m) => [m.id, m.date, m.bodyFatPct])).toEqual([['hk_' + T702, T702, 18.5]]);
+    // A different weight 4 minutes later, its first weigh-in not in the paste: a second row, the first one untouched.
+    const reweigh = await importText(weighIn('Oct 5, 2026 at 7:06 AM', 183.8));
+    expect(reweigh.update).toEqual([]);
+    expect(reweigh.add.map((m) => m.id)).toEqual(['hk_' + at(7, 6)]);
+    expect((await db.measurements.get('hk_' + T702))?.bodyweightKg).toBeCloseTo(LB(184.2), 9);
+  });
+
+  it('body fat pairs with the nearest weight within 10 minutes; a reading left over is its own row', async () => {
     const plan = await importText(
       lines(
         'heft-health',
@@ -465,15 +804,138 @@ describe('planHealthImport + applyHealthImport', () => {
         'body fat date: Oct 4, 2026 at 7:00 AM',
       ),
     );
-    expect(plan.add).toHaveLength(2);
-    const oct4 = plan.add.find((m) => m.date === new Date(2026, 9, 4, 7, 0).getTime())!;
-    expect(oct4).toMatchObject({ bodyweightKg: null, bodyFatPct: 19, source: 'health' });
-    expect(plan.add.find((m) => m.id === 'hk_' + T702)?.bodyFatPct).toBe(18.5);
+    expect(plan.add.map((m) => [m.id, m.bodyweightKg == null, m.bodyFatPct])).toEqual([
+      ['hk_' + at(7, 0, 4), true, 19],
+      ['hk_' + at(6, 0), true, 17],
+      ['hk_' + T702, false, 18.5],
+    ]);
 
     await db.measurements.clear();
-    await db.settings.clear();
-    const far = await importText(weighIn('Oct 5, 2026 at 7:02 AM', 184.2, 18, 'Oct 5, 2026 at 9:30 AM'));
-    expect(far.add[0].bodyFatPct).toBe(18); // no body fat near the weight: the day's earliest
+    const far = await importText(weighIn('Oct 5, 2026 at 7:02 AM', 184.2, 18, 'Oct 5, 2026 at 9:30 AM'), {}, at(10, 0));
+    expect(far.add.map((m) => [m.id, m.bodyFatPct])).toEqual([
+      ['hk_' + T702, null],
+      ['hk_' + at(9, 30), 18],
+    ]);
+  });
+
+  it("thirty days of the Shortcut's text (values continued under their keys) make one row per weigh-in", async () => {
+    // As the Shortcut writes it: newest first, ISO 8601 with the phone's offset, body fat a second after the weight
+    // on odd days, and a re-weigh 4 minutes after the morning one every week.
+    const iso = (ms: number, offsetMin = -420) => {
+      const d = new Date(ms + offsetMin * MIN);
+      const p = (n: number) => String(n).padStart(2, '0');
+      const o = Math.abs(offsetMin);
+      return (
+        `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:` +
+        `${p(d.getUTCSeconds())}${offsetMin < 0 ? '-' : '+'}${p(Math.floor(o / 60))}:${p(o % 60)}`
+      );
+    };
+    const base = Date.UTC(2026, 9, 6, 14, 2, 11); // Oct 6, 07:02:11 -07:00
+    const readings: { at: number; lb: number; fat: number; fatAt: number }[] = [];
+    for (let i = 0; i < 30; i++) {
+      const morning = base - i * DAY + (i % 4) * MIN;
+      readings.push({ at: morning, lb: 184.2 + i * 0.1, fat: 19.4 + (i % 3) * 0.1, fatAt: morning + (i % 2) * 1000 });
+      if (i % 7 === 3) readings.push({ at: morning + 4 * MIN, lb: 183.9 + i * 0.1, fat: 19.1, fatAt: morning + 4 * MIN });
+    }
+    readings.sort((a, b) => b.at - a.at);
+    const col = (key: string, values: string[]) => [`${key}: ${values[0]}`, ...values.slice(1)];
+    const text = lines(
+      'heft-health',
+      ...col('weight', readings.map((r) => `${r.lb.toFixed(1)} lb`)),
+      ...col('weight date', readings.map((r) => iso(r.at))),
+      ...col('body fat', readings.map((r) => `${r.fat.toFixed(1)}%`)),
+      ...col('body fat date', readings.map((r) => iso(r.fatAt))),
+    );
+    expect(text.split('\n').slice(0, 3)).toEqual(['heft-health', 'weight: 184.2 lb', '184.3 lb']);
+    expect(readings).toHaveLength(34); // 30 mornings + 4 re-weighs
+
+    const now = base + 2 * HOUR;
+    expect(parseHealthText(text, { unit: 'lb', now }).samples).toHaveLength(68);
+    const plan = await importText(text, {}, now);
+    expect(plan.add).toHaveLength(34);
+    expect(plan.update).toEqual([]);
+    expect(plan.skipped).toEqual([]);
+    expect(plan.importedThrough).toBe(base);
+    const rows = await db.measurements.toArray();
+    expect(rows).toHaveLength(34);
+    expect(new Set(rows.map((m) => m.id)).size).toBe(34);
+    expect(rows.map((m) => m.healthAt).sort()).toEqual(readings.map((r) => r.at).sort());
+    for (const r of readings) {
+      const row = rows.find((m) => m.healthAt === r.at)!;
+      expect(row.bodyweightKg).toBeCloseTo(LB(Number(r.lb.toFixed(1))), 9);
+      expect(row.bodyFatPct).toBe(Number(r.fat.toFixed(1)));
+      expect(row).toMatchObject({ id: 'hk_' + r.at, date: r.at, source: 'health' });
+    }
+
+    // The next sync sends the same 30 days: nothing changes.
+    const again = await importText(text, {}, now);
+    expect(again.add).toEqual([]);
+    expect(again.update).toEqual([]);
+    expect(again.skipped).toHaveLength(34);
+    expect(again.skipped.every((s) => s.reason === 'unchanged')).toBe(true);
+    // Delete two (the newest, and the bad reading before a re-weigh): only those two are held back next time.
+    await deleteMeasurement(rows.find((m) => m.healthAt === readings[0].at)!);
+    const reweighDay = readings.find((r, i) => readings[i + 1] && r.at - readings[i + 1].at === 4 * MIN)!;
+    await deleteMeasurement(rows.find((m) => m.healthAt === reweighDay.at - 4 * MIN)!);
+    const third = await importText(text, {}, now);
+    expect(third.add).toEqual([]);
+    expect(third.skipped.filter((s) => s.reason === 'deleted').map((s) => s.at).sort()).toEqual(
+      [readings[0].at, reweighDay.at - 4 * MIN].sort(),
+    );
+    expect(third.skipped.filter((s) => s.reason === 'unchanged')).toHaveLength(32);
+  });
+
+  it('rows imported before every weigh-in had its own row are recognised, not duplicated', async () => {
+    const oct4 = at(7, 0, 4);
+    // What the one-row-per-day import left: the day's first weigh-in, a body-fat-only day, and the watermark.
+    await db.measurements.bulkPut([
+      { id: 'hk_' + T702, date: T702, healthAt: T702, source: 'health', bodyweightKg: LB(184.2), bodyFatPct: 18.5, photoIds: [] },
+      { id: 'hk_' + oct4, date: oct4, healthAt: oct4, source: 'health', bodyweightKg: null, bodyFatPct: 19, photoIds: [] },
+    ]);
+    const old: Partial<Settings> = { ...(await getSettings()), healthImportedThrough: T702 };
+    delete old.healthDeleted; // settings saved before deletes were remembered
+    await db.settings.put(old as Settings);
+    const plan = await importText(
+      lines(
+        'heft-health',
+        'weight: 186 lb',
+        '184.2 lb',
+        '185.5 lb',
+        'weight date: Oct 5, 2026 at 6:30 PM',
+        'Oct 5, 2026 at 7:02 AM',
+        'Oct 3, 2026 at 7:10 AM',
+        'body fat: 18.5%',
+        '19%',
+        'body fat date: Oct 5, 2026 at 7:02 AM',
+        'Oct 4, 2026 at 7:00 AM',
+      ),
+      {},
+      at(20, 0),
+    );
+    expect(plan.update).toEqual([]);
+    expect(plan.skipped).toEqual([
+      { reason: 'unchanged', at: oct4 },
+      { reason: 'unchanged', at: T702 },
+    ]);
+    // The weigh-ins the old import never brought in (the evening one, a day before its watermark) come in now.
+    expect(plan.add.map((m) => m.id)).toEqual(['hk_' + at(7, 10, 3), 'hk_' + at(18, 30)]);
+    expect(await db.measurements.count()).toBe(4);
+  });
+
+  it('two imported rows on one local day (after a time-zone change): each answers only to its own samples', async () => {
+    const A = at(0, 30);
+    const B = at(7, 0);
+    await db.measurements.bulkPut([
+      { id: 'hk_' + A, date: A, healthAt: A, source: 'health', bodyweightKg: 84, bodyFatPct: null, photoIds: [] },
+      { id: 'hk_' + B, date: B, healthAt: B, source: 'health', bodyweightKg: 83.5, bodyFatPct: 18.5, photoIds: [] },
+    ]);
+    const plan = await importText(
+      lines('heft-health', 'weight: 83.5 kg', 'weight date: Oct 5, 2026 at 7:00 AM', 'body fat: 18.5%', 'body fat date: Oct 5, 2026 at 7:00 AM'),
+    );
+    expect(plan.update).toEqual([]);
+    expect(plan.add).toEqual([]);
+    expect(plan.skipped).toEqual([{ reason: 'unchanged', at: B }]);
+    expect((await db.measurements.get('hk_' + A))?.bodyFatPct).toBeNull();
   });
 
   it('the newest imported weight feeds calories, but a NEWER hand-typed profile weight still wins', async () => {
@@ -483,72 +945,95 @@ describe('planHealthImport + applyHealthImport', () => {
     await updateSettings({ bodyweightKg: 80, bodyweightUpdatedAt: T702 + HOUR });
     expect(await currentBodyweightKg()).toBe(80);
     // A later weigh-in imported afterwards wins again.
-    await importText(weighIn('Oct 6, 2026 at 7:00 AM', 183));
+    await importText(weighIn('Oct 6, 2026 at 7:00 AM', 183), {}, at(9, 0, 6));
     expect(await currentBodyweightKg()).toBeCloseTo(LB(183), 9);
   });
 
-  it('a weigh-in skipped for your own entry never moves the watermark: delete yours and the scale’s comes in', async () => {
-    await db.measurements.put({ id: 'm1', date: new Date(2026, 9, 5, 6, 30).getTime(), bodyweightKg: 84, photoIds: [] });
+  it('a plan that writes nothing leaves the settings alone', async () => {
+    await db.measurements.put({ id: 'hk_' + T702, date: T702, healthAt: T702, source: 'manual', bodyweightKg: 83, photoIds: [] });
     const plan = await importText(TEMPLATE);
-    expect(plan.skipped.map((s) => s.reason)).toEqual(['manual']);
+    expect(plan.skipped.map((s) => s.reason)).toEqual(['edited']);
     expect(plan.importedThrough).toBeNull();
-    // The "Done" of that nothing-new preview writes nothing.
-    expect(await getSettings()).toMatchObject({ healthImportedThrough: null, healthImportedAt: null });
-
-    await db.measurements.delete('m1');
-    const again = await importText(TEMPLATE);
-    expect(again.skipped).toEqual([]);
-    expect(again.add.map((m) => m.id)).toEqual(['hk_' + T702]);
-    expect((await getSettings()).healthImportedThrough).toBe(T702);
+    // The "Done" of that nothing-new preview writes no settings row at all.
+    expect(await db.settings.get('settings')).toBeUndefined();
   });
 
-  it('a later same-day weigh-in that is skipped does not move the watermark ("Last import")', async () => {
-    await importText(TEMPLATE);
-    const importedAt = (await getSettings()).healthImportedAt;
-    const later = await importText(weighIn('Oct 5, 2026 at 6:00 PM', 186, 19));
-    expect(later.skipped.map((s) => s.reason)).toEqual(['later']);
-    expect(later.importedThrough).toBeNull();
-    expect(await getSettings()).toMatchObject({ healthImportedThrough: T702, healthImportedAt: importedAt });
-  });
+  it('applying checks the database again: an entry deleted or edited after the preview is left alone', async () => {
+    await importText(weighIn('Oct 5, 2026 at 7:02 AM', 184.2));
+    const plan = () =>
+      Promise.all([db.measurements.toArray(), getSettings()]).then(([rows, s]) =>
+        planHealthImport(parse(TEMPLATE).samples, rows, s),
+      );
 
-  it('a weight timed a minute before its body fat joins the body-fat-only row instead of being called deleted', async () => {
-    const T701 = T702 - MIN;
-    // Paste 1: the latest Weight is still yesterday's, the latest Body Fat is this morning's.
-    const first = await importText(weighIn('Oct 4, 2026 at 7:00 AM', 185, 18.5, 'Oct 5, 2026 at 7:02 AM'));
-    expect(first.add.map((m) => m.id).sort()).toEqual(['hk_' + new Date(2026, 9, 4, 7, 0).getTime(), 'hk_' + T702].sort());
-    expect((await getSettings()).healthImportedThrough).toBe(T702);
-
-    // Paste 2: this morning's weight has reached Health, timed in the minute before its body fat.
-    const today = weighIn('Oct 5, 2026 at 7:01 AM', 184.2, 18.5, 'Oct 5, 2026 at 7:02 AM');
-    const second = await importText(today);
-    expect(second.skipped).toEqual([]);
-    expect(second.add).toEqual([]);
-    expect(second.update).toHaveLength(1);
+    // Edited while the preview was open: the edit stays.
+    const p1 = await plan();
+    expect(p1.update.map((m) => m.id)).toEqual(['hk_' + T702]);
     const row = (await db.measurements.get('hk_' + T702))!;
-    expect(row).toMatchObject({ date: T701, healthAt: T701, bodyFatPct: 18.5, source: 'health' });
-    expect(row.bodyweightKg).toBeCloseTo(LB(184.2), 9);
-    expect(await db.measurements.count()).toBe(2);
-    expect(await currentBodyweightKg()).toBeCloseTo(LB(184.2), 9);
+    await db.measurements.put(editedMeasurement(row, { id: row.id, date: row.date, photoIds: [], bodyweightKg: 83 }));
+    expect(await applyHealthImport(p1)).toEqual({ added: 0, updated: 0 });
+    expect(await db.measurements.get(row.id)).toMatchObject({ source: 'manual', bodyweightKg: 83, bodyFatPct: null });
 
-    const third = await importText(today);
-    expect(third.update).toEqual([]);
-    expect(third.skipped.map((s) => s.reason)).toEqual(['unchanged']);
+    // Deleted while the preview was open: it stays deleted.
+    await db.measurements.put(row);
+    const p2 = await plan();
+    await deleteMeasurement(row);
+    expect(await applyHealthImport(p2)).toEqual({ added: 0, updated: 0 });
+    expect(await db.measurements.count()).toBe(0);
+
+    // A new weigh-in the automatic sync brought in and the user deleted while the preview was open: stays deleted.
+    await db.settings.clear();
+    const p3 = await plan();
+    expect(p3.add.map((m) => m.id)).toEqual(['hk_' + T702]);
+    await applyHealthImport(p3);
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    expect(await applyHealthImport(p3)).toEqual({ added: 0, updated: 0 });
+    expect(await db.measurements.count()).toBe(0);
   });
 
-  it('two imported rows on one local day (after a time-zone change): samples refresh their own row only', async () => {
-    const A = new Date(2026, 9, 5, 0, 30).getTime();
-    const B = new Date(2026, 9, 5, 7, 0).getTime();
-    await db.measurements.bulkPut([
-      { id: 'hk_' + A, date: A, healthAt: A, source: 'health', bodyweightKg: 84, bodyFatPct: null, photoIds: [] },
-      { id: 'hk_' + B, date: B, healthAt: B, source: 'health', bodyweightKg: 83.5, bodyFatPct: 18.5, photoIds: [] },
-    ]);
-    await updateSettings({ healthImportedThrough: B });
-    const plan = await importText(
-      lines('heft-health', 'weight: 83.5 kg', 'weight date: Oct 5, 2026 at 7:00 AM', 'body fat: 18.5%', 'body fat date: Oct 5, 2026 at 7:00 AM'),
-    );
-    expect(plan.update).toEqual([]);
-    expect(plan.skipped).toEqual([{ reason: 'unchanged', at: B }]);
-    expect((await db.measurements.get('hk_' + A))?.bodyFatPct).toBeNull();
+  it('a paste preview applied after the automatic sync saved the same weigh-in neither counts it nor clears it', async () => {
+    const p = planHealthImport(parse(weighIn('Oct 5, 2026 at 7:02 AM', 184.2)).samples, [], await getSettings());
+    expect(p.add.map((m) => [m.id, m.bodyFatPct])).toEqual([['hk_' + T702, null]]);
+    // While the preview is open, the automatic sync saves the weigh-in with its body fat.
+    await importText(TEMPLATE);
+    await updateSettings({ healthImportedAt: 1 });
+    const settingsBefore = await db.settings.get('settings');
+    expect(await applyHealthImport(p)).toEqual({ added: 0, updated: 0 });
+    expect(await db.measurements.get('hk_' + T702)).toMatchObject({ bodyFatPct: 18.5, source: 'health' });
+    expect(await db.measurements.count()).toBe(1);
+    expect(await db.settings.get('settings')).toEqual(settingsBefore);
+
+    // A stale preview that brings something new fills it in (an update, never an add).
+    await db.measurements.update('hk_' + T702, { bodyFatPct: null });
+    const withFat = planHealthImport(parse(TEMPLATE).samples, [], await getSettings());
+    expect(await applyHealthImport(withFat)).toEqual({ added: 0, updated: 1 });
+    expect((await db.measurements.get('hk_' + T702))?.bodyFatPct).toBe(18.5);
+    expect(await db.measurements.count()).toBe(1);
+  });
+});
+
+describe('deleteMeasurement', () => {
+  beforeEach(async () => {
+    await Promise.all([db.measurements.clear(), db.settings.clear(), db.media.clear()]);
+  });
+
+  it('removes the row and its photos and remembers an Apple Health sample; a later import skips it', async () => {
+    await importText(TEMPLATE);
+    await db.media.put({ id: 'p1', blob: new Blob(['x']), type: 'image/jpeg', createdAt: 0 });
+    await db.measurements.update('hk_' + T702, { photoIds: ['p1'] });
+    await deleteMeasurement((await db.measurements.get('hk_' + T702))!);
+    expect(await db.measurements.count()).toBe(0);
+    expect(await db.media.count()).toBe(0);
+    expect((await getSettings()).healthDeleted).toEqual([T702]);
+    expect((await importText(TEMPLATE)).skipped).toEqual([{ reason: 'deleted', at: T702 }]);
+    expect(await db.measurements.count()).toBe(0);
+  });
+
+  it('a row typed in Heft leaves no tombstone', async () => {
+    await db.measurements.put({ id: 'm1', date: T702, bodyweightKg: 84, photoIds: [] });
+    await deleteMeasurement((await db.measurements.get('m1'))!);
+    expect(await db.measurements.count()).toBe(0);
+    expect((await getSettings()).healthDeleted).toEqual([]);
+    expect((await importText(TEMPLATE)).add.map((m) => m.id)).toEqual(['hk_' + T702]);
   });
 });
 
@@ -585,8 +1070,10 @@ describe('backup round-trip', () => {
     });
   });
 
-  it('keeps source / healthAt on rows and the settings watermark', async () => {
+  it('keeps source / healthAt on rows and the deleted weigh-ins', async () => {
+    await importText(weighIn('Oct 4, 2026 at 7:00 AM', 185, 18.9));
     await importText(TEMPLATE);
+    await deleteMeasurement((await db.measurements.get('hk_' + at(7, 0, 4)))!);
     const before = await db.measurements.toArray();
     const settingsBefore = await getSettings();
     const text = await (await exportBackup()).text();
@@ -595,12 +1082,12 @@ describe('backup round-trip', () => {
     });
     await importBackup(text);
     expect(await db.measurements.toArray()).toEqual(before);
-    expect((await db.measurements.get('hk_' + T702))).toMatchObject({ source: 'health', healthAt: T702 });
+    expect(await db.measurements.get('hk_' + T702)).toMatchObject({ source: 'health', healthAt: T702 });
     const s = await getSettings();
     expect(s.healthImportedThrough).toBe(T702);
     expect(s.healthImportedAt).toBe(settingsBefore.healthImportedAt);
-    // The restored watermark still stops a deleted row from coming back.
-    await db.measurements.delete('hk_' + T702);
-    expect((await importText(TEMPLATE)).skipped.map((x) => x.reason)).toEqual(['old']);
+    expect(s.healthDeleted).toEqual([at(7, 0, 4)]);
+    // The restored tombstone still keeps the deleted weigh-in out.
+    expect((await importText(weighIn('Oct 4, 2026 at 7:00 AM', 185, 18.9))).skipped).toEqual([{ reason: 'deleted', at: at(7, 0, 4) }]);
   });
 });

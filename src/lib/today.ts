@@ -37,7 +37,7 @@ export interface WeighIn {
   /** Epoch ms of the measurement row it came from. */
   at: number;
   kg: number;
-  /** Body fat from the same row, else the day's earliest body fat reading; null when the day has none. */
+  /** Body fat from the same row, else the day's latest body fat reading; null when the day has none. */
   bodyFatPct: number | null;
   /** 'health' = imported from Apple Health (the Hume scale); 'manual' = typed into Heft. */
   source: 'manual' | 'health';
@@ -51,26 +51,27 @@ const validKg = (v: number | null | undefined): v is number => typeof v === 'num
 const validPct = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 100;
 
 /**
- * One weigh-in per local day, oldest first: the day's EARLIEST row with a body weight (a scale is read in the
- * morning; the same anchor the Apple Health import uses), but a typed row (source not 'health') beats an imported
- * one, MANUAL WINS as in the Apple Health import. Body fat rides along from that row, else the day's earliest body
- * fat reading (the import can make a body-fat-only row when fat synced before weight).
+ * One weigh-in per local day, oldest first (the trend, the pace, the chart and Today's big number all read it):
+ * - a TYPED row (source not 'health': entered in Heft, or an imported row the user edited) beats the scale's;
+ * - otherwise the day's LATEST Apple Health row. Every Hume reading is its own row, and stepping back on the scale
+ *   after a bad reading replaces it (the bad one can also be deleted from Today's weigh-ins sheet);
+ * - among several typed rows, likewise the latest.
+ * Body fat rides along from that row, else the day's latest body fat reading (a body-fat-only row: fat measured with
+ * no weight within 10 minutes of it).
  */
 export function dailyWeighIns(measurements: readonly MeasurementLike[]): WeighIn[] {
   const sorted = [...measurements].filter((m) => Number.isFinite(m.date)).sort((a, b) => a.date - b.date);
   const typed = new Map<string, MeasurementLike>();
   const health = new Map<string, MeasurementLike>();
   const fat = new Map<string, number>();
+  // Oldest first, so a later row of the day overwrites an earlier one: each map ends with the day's latest.
   for (const m of sorted) {
     const day = dayKey(m.date);
-    if (validKg(m.bodyweightKg)) {
-      const pick = m.source === 'health' ? health : typed;
-      if (!pick.has(day)) pick.set(day, m);
-    }
-    if (validPct(m.bodyFatPct) && !fat.has(day)) fat.set(day, m.bodyFatPct);
+    if (validKg(m.bodyweightKg)) (m.source === 'health' ? health : typed).set(day, m);
+    if (validPct(m.bodyFatPct)) fat.set(day, m.bodyFatPct);
   }
   const weight = new Map(health);
-  for (const [day, m] of typed) weight.set(day, m); // MANUAL WINS, as in the Apple Health import
+  for (const [day, m] of typed) weight.set(day, m); // a typed weigh-in beats the scale's
   const out: WeighIn[] = [];
   for (const [day, m] of weight) {
     out.push({
@@ -87,16 +88,18 @@ export function dailyWeighIns(measurements: readonly MeasurementLike[]): WeighIn
 
 /**
  * One body fat reading per local day, oldest first, from ALL rows (a typed caliper reading or a fat-only Apple Health
- * row counts too): the day's weigh-in row's own fat when it has one, else the day's earliest reading (the rule
+ * row counts too): the day's weigh-in row's own fat when it has one, else the day's latest reading (the rule
  * dailyWeighIns uses).
  */
 export function dailyBodyFat(measurements: readonly MeasurementLike[]): { day: string; value: number }[] {
-  const byDay = new Map<string, number>();
-  for (const w of dailyWeighIns(measurements)) if (w.bodyFatPct != null) byDay.set(w.day, w.bodyFatPct);
+  const fromWeighIn = new Map<string, number>();
+  for (const w of dailyWeighIns(measurements)) if (w.bodyFatPct != null) fromWeighIn.set(w.day, w.bodyFatPct);
+  const byDay = new Map(fromWeighIn);
   const sorted = [...measurements].filter((m) => Number.isFinite(m.date)).sort((a, b) => a.date - b.date);
+  // Oldest first: a later reading overwrites an earlier one, so a day without a weigh-in keeps its latest.
   for (const m of sorted) {
     const day = dayKey(m.date);
-    if (validPct(m.bodyFatPct) && !byDay.has(day)) byDay.set(day, m.bodyFatPct);
+    if (validPct(m.bodyFatPct) && !fromWeighIn.has(day)) byDay.set(day, m.bodyFatPct);
   }
   return [...byDay].map(([day, value]) => ({ day, value })).sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 }

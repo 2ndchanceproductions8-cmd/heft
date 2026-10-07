@@ -5,21 +5,34 @@ import { getSettings } from './settings';
 import { KG_PER_LB, kgToUnit, round } from './units';
 
 /*
- * Apple Health → Heft: the latest weigh-in (weight + body fat %) from the owner's smart scale.
+ * Apple Health → Heft: every weigh-in (weight + body fat %) from the owner's smart scale (a Hume Body Pod, which
+ * writes only those two types to Apple Health).
  *
  * A web app can't read HealthKit, and a Shortcut that opens a Heft URL would land in Safari (whose storage is
- * separate from the home-screen app), so the bridge is the clipboard: the user's "Health to Heft" Shortcut finds
- * the latest Weight and Body Fat Percentage samples and COPIES a small text block; back in Heft, "Paste from
- * Health" reads it, shows a preview and saves.
+ * separate from the home-screen app), so the user's "Health to Heft" Shortcut finds the last 30 days of Weight and
+ * Body Fat Percentage samples and writes them as a small text block, which reaches Heft two ways:
+ * - automatically: an iOS automation runs the Shortcut whenever the Hume app closes, and it posts the text to Heft's
+ *   private GitHub inbox, which lib/healthInbox.ts reads;
+ * - by hand: run from Heft (importShortcutUrl), the Shortcut also copies the text, and "Paste from Health" reads the
+ *   clipboard, shows a preview, saves.
  *
  *   heft-health
  *   weight: 184.2 lb
- *   weight date: Oct 5, 2026 at 7:02 AM
- *   body fat: 18.5%
- *   body fat date: Oct 5, 2026 at 7:02 AM
+ *   183.9 lb
+ *   weight date: 2026-10-06T07:02:11-07:00
+ *   2026-10-05T07:01:03-07:00
+ *   body fat: 19.4%
+ *   19.6%
+ *   body fat date: 2026-10-06T07:02:11-07:00
+ *   2026-10-05T07:01:03-07:00
  *
+ * (A list variable puts one value per line under its key; values pair with their dates by position.)
+ *
+ * Every weigh-in becomes its own Measurements row (planHealthImport), so sending the same 30 days again changes
+ * nothing; a weigh-in deleted in Heft never comes back (deleteMeasurement remembers it in Settings.healthDeleted).
  * The parser is deliberately tolerant (Shortcuts' text for a Health Sample or a date varies by iOS version and
- * region): see parseHealthText. Everything here is node-testable; only applyHealthImport touches the database.
+ * region): see parseHealthText. Everything here is node-testable; only applyHealthImport and deleteMeasurement touch
+ * the database.
  *
  * Calories and Food targets need nothing extra: they read the newest weigh-in through lib/settings.ts
  * pickBodyweightKg (a NEWER hand-typed profile weight still wins), so an import never writes the profile.
@@ -35,9 +48,19 @@ export const healthTemplateText = (): string => HEALTH_TEMPLATE_LINES.join('\n')
 
 export { isAppleMobile };
 
-/** Runs the "Health to Heft" Shortcut. Open it from a tap (iOS only follows app links from a user gesture). */
+/** The input Heft passes when IT runs the Shortcut (Get from Health): the Shortcut copies to the clipboard only then. */
+export const HEALTH_PASTE_INPUT = 'paste';
+
+/**
+ * Runs the "Health to Heft" Shortcut with HEALTH_PASTE_INPUT as its input, so its "If Shortcut Input is paste" step
+ * copies the text for Paste from Health (the Hume-closed automation runs it with no input and leaves the clipboard
+ * alone; a Shortcut without that If ignores the input). Open it from a tap (iOS only follows app links from a user
+ * gesture).
+ */
 export function importShortcutUrl(): string {
-  return 'shortcuts://run-shortcut?name=' + encodeURIComponent(HEALTH_IMPORT_SHORTCUT);
+  return (
+    'shortcuts://run-shortcut?name=' + encodeURIComponent(HEALTH_IMPORT_SHORTCUT) + '&input=text&text=' + HEALTH_PASTE_INPUT
+  );
 }
 
 export const WEIGHT_RANGE_KG = [20, 400] as const;
@@ -59,7 +82,7 @@ export interface HealthSample {
 
 export interface HealthParseResult {
   samples: HealthSample[];
-  /** Readable reasons for values that were dropped (unreadable, out of range, bad date). */
+  /** Readable reasons for values that were dropped (unreadable, out of range, a bad or missing date). */
   errors: string[];
   /** False when the text isn't Heft health data at all (no heft-health line and no weight / body fat keys). */
   recognized: boolean;
@@ -73,7 +96,7 @@ export interface HealthParseResult {
 export interface HealthParseOptions {
   /** The unit for a weight written without one. */
   unit: Unit;
-  /** "Now" for samples without a date (and the future-date check). Defaults to Date.now(). */
+  /** "Now" for the future-date check and "Today" / "Yesterday" dates. Defaults to Date.now(). */
   now?: number;
 }
 
@@ -446,7 +469,9 @@ function collectLines(src: string): Collected {
   let current: ListField | null = null;
   let currentUnit: string | undefined;
   for (const raw of src.split('\n')) {
-    const line = raw.trim();
+    // A line this long is nothing the Shortcut writes: skipped like a blank line (and kept from KEY_LINE, which is
+    // slow on long runs of spaces).
+    const line = raw.length > 300 ? '' : raw.trim();
     if (!line) {
       current = null;
       continue;
@@ -482,10 +507,10 @@ function collectLines(src: string): Collected {
   return c;
 }
 
-/** JSON values → text: numbers, strings, {value, unit} objects and arrays of those. */
-function jsonVals(v: unknown, unit?: string): Val[] {
-  if (v == null || v === '') return [];
-  if (Array.isArray(v)) return v.flatMap((x) => jsonVals(x, unit));
+/** JSON values → text: numbers, strings, {value, unit} objects and arrays of those (nested at most 4 deep). */
+function jsonVals(v: unknown, unit?: string, depth = 0): Val[] {
+  if (depth > 4 || v == null || v === '') return [];
+  if (Array.isArray(v)) return v.flatMap((x) => jsonVals(x, unit, depth + 1));
   if (typeof v === 'number') return Number.isFinite(v) ? [{ text: String(v), unit }] : [];
   if (typeof v === 'string') return v.trim() ? [{ text: v.trim(), unit }] : [];
   if (typeof v === 'object') {
@@ -531,6 +556,8 @@ function collectJson(root: unknown): { records: Collected[]; recognized: boolean
       } else if (cls.field === 'value') {
         value = v;
       } else {
+        // A record's first generic date key is its date: a sample's endDate after its startDate is the same sample.
+        if (cls.field === 'date' && c.date.length) continue;
         const vals = jsonVals(v, cls.unit);
         if (isKindField(cls.field)) {
           if (!cls.weak) c.recognized = true;
@@ -568,22 +595,25 @@ function buildSamples(c: Collected, unit: Unit, now: number, out: HealthParseRes
     ['weight', c.weight, c.weightDate],
     ['bodyFat', c.bodyFat, c.bodyFatDate],
   ];
-  for (const [kind, values, dates] of kinds) {
+  for (const [kind, values, own] of kinds) {
+    if (!values.length) continue;
+    // Values pair with their dates by position: the kind's own dates, else the generic "date" list. Lists of
+    // different lengths can't be paired (every value would get another sample's date).
+    const dates = own.length ? own : c.date;
+    if (dates.length && dates.length !== values.length) {
+      out.errors.push(`${values.length} ${LABEL[kind]} values but ${dates.length} dates`);
+      continue;
+    }
     values.forEach((v, i) => {
-      const what = `${LABEL[kind]} "${v.text}"`;
-      const value = kind === 'weight' ? parseWeightKg(v.text, v.unit ?? c.unit ?? unit) : parseBodyFatPct(v.text);
-      if (value == null) {
+      // Long text is cut (an error message never carries a whole odd post) and never reaches the regexes.
+      const what = `${LABEL[kind]} "${v.text.slice(0, 40)}"`;
+      if (v.text.length > 64) {
         out.errors.push(`Couldn't read the ${what}`);
         return;
       }
-      const dateVal = dates[i] ?? c.date[i];
-      const at = dateVal ? parseHealthDate(dateVal.text, now) : now;
-      if (at == null) {
-        out.errors.push(`Couldn't read the date "${dateVal!.text}" for the ${what}`);
-        return;
-      }
-      if (at > now + FUTURE_SLACK_MS) {
-        out.errors.push(`The ${what} is dated in the future`);
+      const value = kind === 'weight' ? parseWeightKg(v.text, v.unit ?? c.unit ?? unit) : parseBodyFatPct(v.text);
+      if (value == null) {
+        out.errors.push(`Couldn't read the ${what}`);
         return;
       }
       const [lo, hi] = kind === 'weight' ? WEIGHT_RANGE_KG : BODY_FAT_RANGE;
@@ -594,6 +624,25 @@ function buildSamples(c: Collected, unit: Unit, now: number, out: HealthParseRes
             ? `${Math.round(kgToUnit(lo, unit))}–${Math.round(kgToUnit(hi, unit))} ${unit}`
             : `${lo}–${hi}%`;
         out.errors.push(`The ${what} is outside ${range}`);
+        return;
+      }
+      // No date is no sample: "now" would make a new weigh-in on every sync.
+      const dateVal = dates[i];
+      if (!dateVal) {
+        out.errors.push(`The ${what} has no date`);
+        return;
+      }
+      if (dateVal.text.length > 64) {
+        out.errors.push(`Couldn't read the date "${dateVal.text.slice(0, 40)}" for the ${what}`);
+        return;
+      }
+      const at = parseHealthDate(dateVal.text, now);
+      if (at == null) {
+        out.errors.push(`Couldn't read the date "${dateVal.text}" for the ${what}`);
+        return;
+      }
+      if (at > now + FUTURE_SLACK_MS) {
+        out.errors.push(`The ${what} is dated in the future`);
         return;
       }
       out.samples.push({ kind, value, at });
@@ -608,7 +657,8 @@ function buildSamples(c: Collected, unit: Unit, now: number, out: HealthParseRes
  *   Generic keys ("fat", "mass", "bf") are read but don't make text recognized on their own (WEAK_KEYS)
  * - weights in lb/lbs/kg/st (also "13 st 2 lb")/g, or no unit (= opts.unit); decimal commas
  * - body fat as "18.5%", "18.5" or a fraction "0.185"
- * - dates per parseHealthDate; a missing date = now
+ * - dates per parseHealthDate; a value without a date is dropped with an error (so is every value of a kind whose
+ *   values and dates are lists of different lengths)
  * - JSON {"weight", "weightDate", "bodyFat", "bodyFatDate"} (or lists / {samples: […]})
  * - lists of many samples: repeated key lines, or values continued on the lines under a key (how Shortcuts
  *   writes a list variable), paired with the dates by position
@@ -650,196 +700,387 @@ export function parseHealthText(text: string, opts: HealthParseOptions): HealthP
 
 // ------------------------------------------------------------------ planning
 
-/** Why a day's samples were not imported. */
-export type HealthSkipReason = 'unchanged' | 'old' | 'manual' | 'edited' | 'later';
+/** Why a weigh-in was left alone. */
+export type HealthSkipReason = 'unchanged' | 'deleted' | 'edited';
 
 export const HEALTH_SKIP_LABEL: Record<HealthSkipReason, string> = {
   unchanged: 'Already in Heft',
-  old: 'Imported before (deleted in Heft since)',
-  manual: 'You logged a weigh-in that day',
-  edited: 'You edited this entry in Heft',
-  later: 'Heft keeps the first weigh-in of the day',
+  deleted: 'You deleted it in Heft',
+  edited: 'You edited it in Heft',
 };
 
 export interface HealthImportPlan {
+  /** New rows, one per weigh-in Heft doesn't have yet. */
   add: Measurement[];
+  /** Imported rows whose values change (body fat that synced after its weight, a weight joining its body fat's row). */
   update: Measurement[];
+  /** One entry per weigh-in left alone; `at` = its anchor (the weight's time, or the body fat's on a fat-only one). */
   skipped: { reason: HealthSkipReason; at: number }[];
   /**
-   * The new watermark candidate: the newest sample this import writes into a row, or that an imported row already
-   * holds. Samples skipped as manual / edited / later never count (nothing of theirs is in Heft), so deleting your
-   * own entry later still lets the scale's reading in. null = none.
+   * The newest sample this import writes, or that an imported row already holds; null = none. Display only
+   * (Settings.healthImportedThrough, "newest weigh-in from the scale"): it no longer decides what may be imported.
    */
   importedThrough: number | null;
+  /**
+   * Settings.healthDeleted times this plan lifts: the deleted weigh-ins a reimportAll plan brings back (only those,
+   * so a deleted weigh-in that isn't in this paste stays deleted). applyHealthImport removes them.
+   */
+  clearDeleted?: number[];
 }
 
 export interface HealthPlanOptions {
-  /** Ignore the watermark: bring back imported weigh-ins that were deleted in Heft. */
+  /** "Bring deleted weigh-ins back": ignore Settings.healthDeleted (the plan's clearDeleted lifts what it restores). */
   reimportAll?: boolean;
 }
 
-const EXACT_MS = 1000;
-const anchorOf = (m: Measurement) => m.healthAt ?? m.date;
-const exactSample = (list: HealthSample[], at: number) => list.find((s) => Math.abs(s.at - at) < EXACT_MS);
-
-/** The sample closest to `at` within one weigh-in (10 minutes). */
-function nearSample(list: HealthSample[], at: number): HealthSample | undefined {
-  let best: HealthSample | undefined;
-  for (const s of list) {
-    const d = Math.abs(s.at - at);
-    if (d <= SAME_WEIGH_IN_MS && (!best || d < Math.abs(best.at - at))) best = s;
-  }
-  return best;
+/** One time on the scale: a weight and the body fat measured with it, or a body fat reading on its own. */
+export interface HealthWeighIn {
+  /** The anchor: the weight's time, else the body fat's. A new row's id ("hk_<anchor>"), date and healthAt. */
+  at: number;
+  weight?: HealthSample;
+  bodyFat?: HealthSample;
 }
+
+/**
+ * Two times this close are the same sample: Shortcuts' ISO 8601 text keeps whole seconds, so the same sample read
+ * through another format can differ by the milliseconds.
+ */
+const SAME_SAMPLE_MS = 999;
+
+const validKg = (v: number | null | undefined): v is number => v != null && Number.isFinite(v) && v > 0;
+const validPct = (v: number | null | undefined): v is number => v != null && Number.isFinite(v) && v > 0;
 
 function differs(a: number | null | undefined, b: number | null | undefined): boolean {
   if (a == null || b == null) return (a ?? null) !== (b ?? null);
   return Math.abs(a - b) > 1e-6;
 }
 
+/** Oldest first, one sample per instant (the first one listed wins). */
+function byTime(list: HealthSample[]): HealthSample[] {
+  const out: HealthSample[] = [];
+  for (const s of [...list].sort((a, b) => a.at - b.at)) if (!out.length || out[out.length - 1].at !== s.at) out.push(s);
+  return out;
+}
+
 /**
- * Decide what an import does, one LOCAL day at a time (one Heft row per day = that day's first weigh-in):
- * - the anchor is the day's earliest weight sample; body fat measured within 10 minutes of it rides along
- *   (else the day's earliest body fat). A day with only body fat makes a row with only bodyFatPct.
- * - new rows get the stable id "hk_<anchor ms>", source 'health', healthAt = anchor.
- * - MANUAL WINS: a day that already has a weigh-in typed in Heft (any row whose source isn't 'health' with a
- *   body weight — including an imported row the user edited) is skipped whole and counted.
- * - an existing imported row for the day is updated only when its values differ (re-importing is a no-op), and a
- *   later weigh-in the same day only fills a value that row is missing. When a time-zone change has put two
- *   imported rows on one local day, the row the samples came from is the one refreshed, and a value is filled
- *   only from the same weigh-in (never from the other row's weigh-in).
- * - deleted rows stay deleted: a sample at or before settings.healthImportedThrough never creates a row (it
- *   can still refresh the row it created) unless opts.reimportAll. A weight from the same weigh-in as the day's
- *   imported row (its body fat came in first, timed a minute later) joins that row: that row wasn't deleted.
- * - plan.importedThrough is the watermark candidate (see HealthImportPlan).
+ * Group samples into weigh-ins, oldest first: every weight is one; a body fat reading within SAME_WEIGH_IN_MS joins
+ * the NEAREST weight (each reading joins one weight, each weight takes one reading); a body fat reading left over is
+ * a weigh-in of its own (its weight hasn't reached Apple Health yet, or the scale only measured fat).
+ */
+export function groupWeighIns(samples: readonly HealthSample[]): HealthWeighIn[] {
+  const valid = samples.filter((s) => Number.isFinite(s.at) && Number.isFinite(s.value));
+  const ws = byTime(valid.filter((s) => s.kind === 'weight'));
+  const fs = byTime(valid.filter((s) => s.kind === 'bodyFat'));
+  // Every weight / body fat pair close enough to be one weigh-in, nearest first.
+  const pairs: { w: number; f: number; d: number }[] = [];
+  let from = 0;
+  ws.forEach((w, wi) => {
+    while (from < fs.length && fs[from].at < w.at - SAME_WEIGH_IN_MS) from++;
+    for (let fi = from; fi < fs.length && fs[fi].at <= w.at + SAME_WEIGH_IN_MS; fi++) {
+      pairs.push({ w: wi, f: fi, d: Math.abs(fs[fi].at - w.at) });
+    }
+  });
+  pairs.sort((a, b) => a.d - b.d || a.w - b.w || a.f - b.f);
+  const fatOf = new Map<number, HealthSample>();
+  const used = new Set<number>();
+  for (const p of pairs) {
+    if (fatOf.has(p.w) || used.has(p.f)) continue;
+    fatOf.set(p.w, fs[p.f]);
+    used.add(p.f);
+  }
+  const out: HealthWeighIn[] = ws.map((w, i) => {
+    const fat = fatOf.get(i);
+    return fat ? { at: w.at, weight: w, bodyFat: fat } : { at: w.at, weight: w };
+  });
+  fs.forEach((f, i) => {
+    if (!used.has(i)) out.push({ at: f.at, bodyFat: f });
+  });
+  return out.sort((a, b) => a.at - b.at);
+}
+
+const sampleTimes = (w: HealthWeighIn): number[] => [w.weight?.at, w.bodyFat?.at].filter((t): t is number => t != null);
+
+/** The times a stored row answers to: its Apple Health sample (healthAt) and the one in its id ("hk_<ms>"). */
+function rowTimes(m: Measurement): number[] {
+  const at = healthSampleAt(m);
+  const fromId = /^hk_(\d+)/.exec(m.id);
+  const idAt = fromId ? Number(fromId[1]) : null;
+  return [at, idAt].filter((t, i, all): t is number => t != null && Number.isFinite(t) && all.indexOf(t) === i);
+}
+
+interface Timed {
+  t: number;
+  /** Index of the weigh-in / row the time belongs to. */
+  i: number;
+}
+
+/** Entries within `ms` of `t` in a list sorted by time. */
+function around(sorted: readonly Timed[], t: number, ms: number): Timed[] {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid].t < t - ms) lo = mid + 1;
+    else hi = mid;
+  }
+  const out: Timed[] = [];
+  for (let k = lo; k < sorted.length && sorted[k].t <= t + ms; k++) out.push(sorted[k]);
+  return out;
+}
+
+const timeIndex = (entries: Timed[]): Timed[] => entries.sort((a, b) => a.t - b.t || a.i - b.i);
+
+interface Pair {
+  w: number;
+  r: number;
+  d: number;
+  /** Lower wins first (before distance). */
+  rank: number;
+}
+
+/** One-to-one, best pairs first: weigh-in index → row index. */
+function assign(pairs: Pair[]): Map<number, number> {
+  pairs.sort((a, b) => a.rank - b.rank || a.d - b.d || a.w - b.w || a.r - b.r);
+  const out = new Map<number, number>();
+  const used = new Set<number>();
+  for (const p of pairs) {
+    if (out.has(p.w) || used.has(p.r)) continue;
+    out.set(p.w, p.r);
+    used.add(p.r);
+  }
+  return out;
+}
+
+/** A row with a weigh-in's values. A value the weigh-in doesn't bring is kept (a Shortcut line can come back empty). */
+function withWeighIn(row: Measurement, w: HealthWeighIn): Measurement {
+  const next: Measurement = { ...row };
+  if (w.weight) next.bodyweightKg = w.weight.value;
+  if (w.bodyFat) next.bodyFatPct = w.bodyFat.value;
+  // A row is anchored on its weight: it moves to a weigh-in anchored on a weight, or to any weigh-in while it has none.
+  if (w.weight || !validKg(row.bodyweightKg)) {
+    next.date = w.at;
+    next.healthAt = w.at;
+  }
+  return next;
+}
+
+const rowChanged = (a: Measurement, b: Measurement) =>
+  differs(a.bodyweightKg, b.bodyweightKg) || differs(a.bodyFatPct, b.bodyFatPct) || a.date !== b.date || a.healthAt !== b.healthAt;
+
+/**
+ * Decide what an import does. EVERY weigh-in is its own row: the scale is sometimes off, so a re-weigh minutes later
+ * is a second row and the bad one can be deleted. Re-importing the same samples (the Shortcut sends the last 30 days
+ * every time) changes nothing.
+ * - Samples group into weigh-ins (groupWeighIns): every weight is one, body fat within 10 minutes joins the nearest
+ *   weight, a body fat reading left over is a body-fat-only weigh-in.
+ * - A weigh-in Heft already has is found by the row answering to one of its sample times (id "hk_<ms>" or healthAt,
+ *   to the second), which also recognises rows imported before every weigh-in got its own row. A row the user
+ *   edited (source 'manual', still carrying its healthAt) is never touched: `edited`. An imported row is updated only
+ *   when a value differs (`unchanged` otherwise); a value the weigh-in doesn't bring is never cleared, except body fat
+ *   this import gives to another weigh-in within 10 minutes (it paired with this weight before its own weight synced).
+ * - Deletes stick: a weigh-in with no row is skipped (`deleted`) unless opts.reimportAll, which restores it and lists
+ *   its tombstones in plan.clearDeleted. A weigh-in with a weight is blocked only by a Settings.healthDeleted time at
+ *   one of its own sample times (to the second); a body-fat-only weigh-in by the nearest one within 10 minutes (the
+ *   other half of a deleted weigh-in). Each tombstone belongs to ONE weigh-in. So a re-weigh minutes after a deleted
+ *   bad reading comes in, even when that reading is gone from Apple Health; and a deleted weigh-in never takes over
+ *   another row through its body fat's time.
+ * - The other half of a weigh-in: when the body fat synced before its weight, the body fat made a body-fat-only row;
+ *   the weight joins that row (it moves to the weight's time; its id stays). Found by the body fat's time, else any
+ *   imported row within 10 minutes that no other weigh-in owns and that doesn't disagree (a row with a weight is a
+ *   different weigh-in from another weight).
+ * - New weigh-ins become rows "hk_<anchor ms>" (anchor = the weight's time, else the body fat's), source 'health',
+ *   date = healthAt = anchor.
+ * - Rows typed in Heft (no Apple Health sample) never block an import and are never touched: a typed weigh-in and the
+ *   scale's sit side by side, and lib/today.ts dailyWeighIns decides which one is the day's.
+ * - plan.importedThrough: the newest sample written or already held (display only).
  */
 export function planHealthImport(
   samples: HealthSample[],
   existing: Measurement[],
-  settings: Pick<Settings, 'healthImportedThrough'>,
+  settings: Pick<Settings, 'healthDeleted'>,
   opts: HealthPlanOptions = {},
 ): HealthImportPlan {
-  const plan: HealthImportPlan = { add: [], update: [], skipped: [], importedThrough: null };
-  const watermark = opts.reimportAll ? null : (settings.healthImportedThrough ?? null);
-  const mark = (at: number | undefined) => {
-    if (at != null) plan.importedThrough = plan.importedThrough == null ? at : Math.max(plan.importedThrough, at);
+  const clearDeleted: number[] = [];
+  const plan: HealthImportPlan = { add: [], update: [], skipped: [], importedThrough: null, clearDeleted };
+  const mark = (w: HealthWeighIn) => {
+    for (const t of sampleTimes(w)) plan.importedThrough = plan.importedThrough == null ? t : Math.max(plan.importedThrough, t);
   };
+  const weighIns = groupWeighIns(samples);
+  const times = weighIns.map(sampleTimes);
 
-  const days = new Map<string, { ws: HealthSample[]; fs: HealthSample[] }>();
-  for (const s of samples) {
-    if (!Number.isFinite(s.at) || !Number.isFinite(s.value)) continue;
-    const key = localDayKey(s.at);
-    const g = days.get(key) ?? { ws: [], fs: [] };
-    (s.kind === 'weight' ? g.ws : g.fs).push(s);
-    days.set(key, g);
-  }
-  const rowsByDay = new Map<string, Measurement[]>();
-  for (const m of existing) {
-    const key = localDayKey(m.date);
-    rowsByDay.set(key, [...(rowsByDay.get(key) ?? []), m]);
-  }
-  const byId = new Map(existing.map((m) => [m.id, m]));
+  // Rows that came from Apple Health: imported ones, and imported ones the user has edited since.
+  const rows = existing.filter((m) => healthSampleAt(m) != null);
+  const rowIndex = timeIndex(rows.flatMap((m, i) => rowTimes(m).map((t) => ({ t, i }))));
 
-  for (const day of [...days.keys()].sort()) {
-    const g = days.get(day)!;
-    const ws = [...g.ws].sort((a, b) => a.at - b.at);
-    const fs = [...g.fs].sort((a, b) => a.at - b.at);
-    // The day's anchor: its earliest weight (or earliest body fat when it has no weight).
-    const anchor = ws[0] ?? fs[0];
-    const rows = rowsByDay.get(day) ?? [];
-
-    // Manual wins: the user's own weigh-in that day (or their own body fat, on a body-fat-only day).
-    const manual = rows.filter((m) => m.source !== 'health');
-    if (manual.some((m) => m.bodyweightKg) || (!ws.length && manual.some((m) => m.bodyFatPct))) {
-      plan.skipped.push({ reason: 'manual', at: anchor.at });
-      continue;
+  // 1. Deleted weigh-ins: each tombstone goes to the ONE weigh-in nearest it (the earlier one on a tie). A weigh-in
+  //    with a weight takes only a tombstone at one of its own sample times (to the second); a body-fat-only one, the
+  //    nearest within 10 minutes (the other half of a deleted weigh-in).
+  const weighInIndex = timeIndex(weighIns.flatMap((_, i) => times[i].map((t) => ({ t, i }))));
+  const tombs = new Map<number, number[]>();
+  for (const t of settings.healthDeleted ?? []) {
+    if (!Number.isFinite(t)) continue;
+    let best: { i: number; d: number } | null = null;
+    for (const hit of around(weighInIndex, t, SAME_WEIGH_IN_MS)) {
+      const d = Math.abs(hit.t - t);
+      // Its own sample, else (within 10 minutes) its body fat arriving without its weight. A weigh-in with a weight at
+      // another time is another weigh-in: the re-weigh after a bad reading the user also deleted from Apple Health.
+      if (d > SAME_SAMPLE_MS && weighIns[hit.i].weight) continue;
+      if (!best || d < best.d || (d === best.d && hit.i < best.i)) best = { i: hit.i, d };
     }
+    if (best) tombs.set(best.i, [...(tombs.get(best.i) ?? []), t]);
+  }
 
-    const health = rows.filter((m) => m.source === 'health').sort((a, b) => anchorOf(a) - anchorOf(b));
-    // Normally one imported row per local day. After a time-zone change two can share one: then refresh the row
-    // these samples came from (its anchor matches one), and fill a missing value only from the same weigh-in.
-    const merged = health.length > 1;
-    const ex =
-      health.find((m) => Math.abs(anchorOf(m) - anchor.at) < EXACT_MS) ??
-      health.find((m) => exactSample(ws, anchorOf(m)) ?? exactSample(fs, anchorOf(m))) ??
-      health[0];
-    const exAt = ex ? anchorOf(ex) : null;
-    const fill = (list: HealthSample[], at: number) => nearSample(list, at) ?? (merged ? undefined : list[0]);
-
-    if (ex && exAt != null && (!ws.length || exAt <= ws[0].at)) {
-      // The day's imported row already exists and is the day's first weigh-in: refresh it. Its own sample
-      // (same time) may correct its values; a later weigh-in only fills what it's missing.
-      const own = !!(exactSample(ws, exAt) ?? exactSample(fs, exAt));
-      const weight = ex.bodyweightKg == null ? fill(ws, exAt) : exactSample(ws, exAt);
-      const fat = ex.bodyFatPct == null ? fill(fs, exAt) : own ? nearSample(fs, exAt) : undefined;
-      const next: Measurement = { ...ex };
-      if (weight) next.bodyweightKg = weight.value;
-      if (fat) next.bodyFatPct = fat.value;
-      if (own) {
-        // The row's own weigh-in: Heft already holds it.
-        mark(exAt);
-        mark(nearSample(fs, exAt)?.at);
+  // 2. The row each weigh-in already has (one each way); a row anchored on the weigh-in's own anchor is the better claim.
+  const exactPairs: Pair[] = [];
+  weighIns.forEach((w, wi) => {
+    const deleted = tombs.has(wi) && !opts.reimportAll;
+    for (const t of times[wi]) {
+      for (const hit of around(rowIndex, t, SAME_SAMPLE_MS)) {
+        const anchored = Math.abs((healthSampleAt(rows[hit.i]) ?? NaN) - w.at) <= SAME_SAMPLE_MS;
+        if (deleted && !anchored) continue; // a deleted weigh-in never takes over another row through its body fat's time
+        exactPairs.push({ w: wi, r: hit.i, d: Math.abs(hit.t - t), rank: anchored ? 0 : 1 });
       }
-      if (differs(ex.bodyweightKg, next.bodyweightKg) || differs(ex.bodyFatPct, next.bodyFatPct)) {
-        plan.update.push(next);
-        mark(weight?.at);
-        mark(fat?.at);
-      } else plan.skipped.push({ reason: !own && ws.length ? 'later' : 'unchanged', at: own || !ws.length ? exAt : ws[0].at });
-      continue;
     }
+  });
+  const own = assign(exactPairs);
+  const owned = new Set(own.values());
 
-    // A new anchor for the day. The day's imported row from this same weigh-in was not deleted: join it.
-    const sameWeighIn = health.find((m) => Math.abs(anchorOf(m) - anchor.at) <= SAME_WEIGH_IN_MS);
-    if (!sameWeighIn && watermark != null && anchor.at <= watermark) {
-      plan.skipped.push({ reason: 'old', at: anchor.at });
-      continue;
+  // 3. The other half of a weigh-in already in Heft: an imported row no weigh-in owns, within 10 minutes, that
+  //    doesn't disagree with it.
+  const free = rows.map((m, i) => ({ m, i })).filter(({ m, i }) => m.source === 'health' && !owned.has(i));
+  const freeIndex = timeIndex(
+    free.flatMap(({ m, i }) => [...new Set([...rowTimes(m), m.date])].filter(Number.isFinite).map((t) => ({ t, i }))),
+  );
+  const fits = (w: HealthWeighIn, m: Measurement) =>
+    !(w.weight && validKg(m.bodyweightKg)) && !(w.bodyFat && validPct(m.bodyFatPct) && differs(m.bodyFatPct, w.bodyFat.value));
+  const joinPairs: Pair[] = [];
+  weighIns.forEach((w, wi) => {
+    if (own.has(wi) || (tombs.has(wi) && !opts.reimportAll)) return;
+    for (const t of times[wi]) {
+      for (const hit of around(freeIndex, t, SAME_WEIGH_IN_MS)) {
+        if (fits(w, rows[hit.i])) joinPairs.push({ w: wi, r: hit.i, d: Math.abs(hit.t - t), rank: 0 });
+      }
     }
-    const id = 'hk_' + anchor.at;
-    const same = byId.get(id);
-    if (same && same.source !== 'health') {
-      plan.skipped.push({ reason: 'edited', at: anchor.at });
-      continue;
+  });
+  const joins = assign(joinPairs);
+
+  // 4. Decide.
+  const taken = new Set(existing.map((m) => m.id));
+  // A weigh-in without body fat whose row holds the body fat this import gives to another weigh-in within 10 minutes:
+  // that reading paired with this weight while its own weight hadn't reached Apple Health yet, so it isn't this row's.
+  const fatElsewhere = (row: Measurement, w: HealthWeighIn) =>
+    !w.bodyFat &&
+    validPct(row.bodyFatPct) &&
+    weighIns.some(
+      (o) => o !== w && o.bodyFat && Math.abs(o.bodyFat.at - w.at) <= SAME_WEIGH_IN_MS && !differs(o.bodyFat.value, row.bodyFatPct),
+    );
+  const refresh = (row: Measurement, w: HealthWeighIn) => {
+    const next = withWeighIn(row, w);
+    if (fatElsewhere(row, w)) next.bodyFatPct = null;
+    if (rowChanged(row, next)) plan.update.push(next);
+    else plan.skipped.push({ reason: 'unchanged', at: w.at });
+    mark(w);
+  };
+  weighIns.forEach((w, wi) => {
+    const mine = own.get(wi);
+    if (mine != null) {
+      const row = rows[mine];
+      if (row.source !== 'health') plan.skipped.push({ reason: 'edited', at: w.at });
+      else refresh(row, w);
+      return;
     }
-    const fat = fill(fs, anchor.at);
-    const values = {
-      date: anchor.at,
-      healthAt: anchor.at,
-      source: 'health' as const,
-      bodyweightKg: ws[0]?.value ?? null,
-      bodyFatPct: fat?.value ?? null,
-    };
-    // A weight joining its weigh-in's row, or an earlier weigh-in than the day's imported row (a re-import of
-    // older history), takes over that row.
-    const target = sameWeighIn ?? ex ?? same;
-    if (target) plan.update.push({ ...target, ...values, bodyFatPct: fat ? fat.value : (target.bodyFatPct ?? null) });
-    else plan.add.push({ id, photoIds: [], ...values });
-    mark(anchor.at);
-    mark(fat?.at);
-  }
+    const dead = tombs.get(wi);
+    if (dead && !opts.reimportAll) {
+      plan.skipped.push({ reason: 'deleted', at: w.at });
+      return;
+    }
+    if (dead) clearDeleted.push(...dead);
+    const join = joins.get(wi);
+    if (join != null) {
+      refresh(rows[join], w);
+      return;
+    }
+    let id = 'hk_' + w.at;
+    for (let n = 2; taken.has(id); n++) id = `hk_${w.at}_${n}`;
+    taken.add(id);
+    plan.add.push({
+      id,
+      date: w.at,
+      healthAt: w.at,
+      source: 'health',
+      bodyweightKg: w.weight?.value ?? null,
+      bodyFatPct: w.bodyFat?.value ?? null,
+      photoIds: [],
+    });
+    mark(w);
+  });
   return plan;
 }
 
 // ------------------------------------------------------------------ saving
 
 /**
- * Save a plan in ONE transaction: the rows, plus the watermark (healthImportedThrough = the newer of the stored
- * one and plan.importedThrough, the newest sample actually brought in) and healthImportedAt = now. A plan that
- * writes nothing and moves no watermark (the "Done" of a nothing-new preview) leaves the settings alone. It never
- * writes the profile body weight: calories and Food targets already follow the newest weigh-in (lib/settings.ts
- * pickBodyweightKg).
+ * Save a plan in ONE transaction. Rows are checked against the database as it is NOW, because a preview can stay
+ * open while the automatic sync runs or an entry is deleted or edited: a row edited since (no longer source
+ * 'health'), an update whose row was deleted since, and a new row whose sample was deleted since are left alone; a
+ * new row the automatic sync saved since only gets the values the plan brings (nothing cleared; counted as updated
+ * when one changes).
+ * Settings: healthImportedAt = now when rows were written, healthImportedThrough = the newer of the stored one and
+ * plan.importedThrough, and the tombstones a "Bring deleted weigh-ins back" plan lifts (plan.clearDeleted) leave
+ * healthDeleted. A plan that changes none of that (the "Done" of a nothing-new preview) leaves the settings alone.
+ * It never writes the profile body weight: calories and Food targets already follow the newest weigh-in
+ * (lib/settings.ts pickBodyweightKg). Returns the rows actually written.
  */
 export async function applyHealthImport(plan: HealthImportPlan): Promise<{ added: number; updated: number }> {
-  const rows = [...plan.add, ...plan.update];
+  let added = 0;
+  let updated = 0;
   await db.transaction('rw', db.measurements, db.settings, async () => {
-    if (rows.length) await db.measurements.bulkPut(rows);
     const cur = await getSettings();
+    const lifted = new Set(plan.clearDeleted ?? []);
+    const deleted = cur.healthDeleted ?? [];
+    const deletedSince = (m: Measurement) => {
+      const at = healthSampleAt(m);
+      return at != null && deleted.some((t) => !lifted.has(t) && Math.abs(t - at) <= SAME_SAMPLE_MS);
+    };
+    const stored = await db.measurements.bulkGet([...plan.add, ...plan.update].map((m) => m.id));
+    const rows: Measurement[] = [];
+    plan.add.forEach((m, i) => {
+      const now = stored[i];
+      if ((now && now.source !== 'health') || deletedSince(m)) return;
+      if (now) {
+        // Saved since the preview (the automatic sync): fill in what this brings, never clear what the row has.
+        const merged = { ...now, bodyweightKg: m.bodyweightKg ?? now.bodyweightKg, bodyFatPct: m.bodyFatPct ?? now.bodyFatPct };
+        if (rowChanged(now, merged)) {
+          rows.push(merged);
+          updated++;
+        }
+        return;
+      }
+      rows.push(m);
+      added++;
+    });
+    plan.update.forEach((m, i) => {
+      const now = stored[plan.add.length + i];
+      if (!now || now.source !== 'health') return;
+      rows.push(m);
+      updated++;
+    });
+    if (rows.length) await db.measurements.bulkPut(rows);
+
     const prev = cur.healthImportedThrough ?? null;
     const next = plan.importedThrough;
     const through = next == null ? prev : prev == null ? next : Math.max(prev, next);
-    if (!rows.length && through === prev) return;
-    await db.settings.put({ ...cur, id: 'settings', healthImportedThrough: through, healthImportedAt: Date.now() });
+    const keep = deleted.filter((t) => !lifted.has(t));
+    if (!rows.length && through === prev && keep.length === deleted.length) return;
+    await db.settings.put({
+      ...cur,
+      id: 'settings',
+      healthImportedThrough: through,
+      healthImportedAt: rows.length ? Date.now() : (cur.healthImportedAt ?? null),
+      healthDeleted: keep,
+    });
   });
-  return { added: plan.add.length, updated: plan.update.length };
+  return { added, updated };
 }
 
 /**
@@ -855,4 +1096,31 @@ export function editedMeasurement(
   const rec: Measurement = { ...(entry ?? {}), ...changes };
   if (edited && entry?.source === 'health') rec.source = 'manual';
   return rec;
+}
+
+// ------------------------------------------------------------------ deleting
+
+/** The Apple Health sample a row came from (imported rows, and imported rows the user edited since), else null. */
+export function healthSampleAt(m: Pick<Measurement, 'id' | 'healthAt' | 'source'>): number | null {
+  if (m.healthAt != null && Number.isFinite(m.healthAt)) return m.healthAt;
+  // "hk_<ms>", or "hk_<ms>_2" when two weigh-ins share a millisecond (planHealthImport).
+  const fromId = /^hk_(\d+)(?:_\d+)?$/.exec(m.id);
+  return fromId ? Number(fromId[1]) : null;
+}
+
+/**
+ * THE way to delete a measurement (Measurements' sheet, Today's weigh-ins sheet): removes the row and its photos and,
+ * for a weigh-in that came from Apple Health, remembers its sample time in Settings.healthDeleted so no later import
+ * (pasted or automatic) brings it back. One transaction.
+ */
+export async function deleteMeasurement(entry: Pick<Measurement, 'id' | 'healthAt' | 'source' | 'photoIds'>): Promise<void> {
+  const at = healthSampleAt(entry);
+  await db.transaction('rw', db.measurements, db.media, db.settings, async () => {
+    await db.measurements.delete(entry.id);
+    if (entry.photoIds?.length) await db.media.bulkDelete(entry.photoIds);
+    if (at == null) return;
+    const cur = await getSettings();
+    const deleted = cur.healthDeleted ?? [];
+    if (!deleted.includes(at)) await db.settings.put({ ...cur, id: 'settings', healthDeleted: [...deleted, at] });
+  });
 }

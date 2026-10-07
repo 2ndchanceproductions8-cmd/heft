@@ -62,8 +62,9 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 | `lib/calc.ts` | `estimate1RM` (Epley), `setVolumeKg`, `workoutVolumeKg`, `countDoneSets`, `totalReps`, `prKindsFor`, `PR_LABEL`, `prMetric`, `detectPRs`, `computeAllPRs`, `bestsByExercise`, `isRecordSet`, `previousInstanceSets(history, exerciseId, {mode, routineId, occurrence})` (the n-th instance's last session, never merged), `exerciseSessions` (per-workout rows for charts), `repRecords` |
 | `lib/calories.ts` | `estimateCalories({durationSec, bodyweightKg, exercises, getExercise})` (MET method; see doc comment), `DEFAULT_BODYWEIGHT_KG` |
 | `lib/settings.ts` | `useSettings()` (never undefined), `getSettings`, `updateSettings(patch)` (a `bodyweightKg` patch is a manual edit, stamped `bodyweightUpdatedAt`; copying the newest weigh-in into it is ignored), `currentBodyweightKg` / `useBodyweightKg` (profile or newest weigh-in, whichever is newer), `pickBodyweightKg(settings, latest)`, `newestWeighIn()` |
-| `lib/today.ts` | the Today dashboard's pure math, by LOCAL day: `lastDays`, `daysBetween`, `dailyWeighIns` (one per day; a typed row beats a Health row, else the earliest), `dailyBodyFat`, `latestBodyFat`, `weightTrend` (gap-aware EMA), `weeklySlope` / `weeklyRateKg`, `goalRateKgPerWeek`, `bodySummary`, `dailyIntake` / `averageIntake`, `dailyTraining`, `unsentWorkouts`, `buildWeek`, `KCAL_PER_KG` |
-| `lib/healthImport.ts` | Apple Health → Measurements: `parseHealthText`, `parseHealthDate`, `parseWeightKg`, `parseBodyFatPct`, `planHealthImport`, `applyHealthImport(plan)`, `editedMeasurement(entry, changes, edited)` (THE way to save a user edit of a measurement), `HEALTH_SKIP_LABEL`, `HEALTH_IMPORT_SHORTCUT`, `importShortcutUrl()`, `HEALTH_TEMPLATE_LINES` / `healthTemplateText()`, `localDayKey` |
+| `lib/today.ts` | the Today dashboard's pure math, by LOCAL day: `lastDays`, `daysBetween`, `dailyWeighIns` (one per day: a typed row beats a Health row, else the day's LATEST reading, so a re-weigh replaces a bad one), `dailyBodyFat`, `latestBodyFat`, `weightTrend` (gap-aware EMA), `weeklySlope` / `weeklyRateKg`, `goalRateKgPerWeek`, `bodySummary`, `dailyIntake` / `averageIntake`, `dailyTraining`, `unsentWorkouts`, `buildWeek`, `KCAL_PER_KG` |
+| `lib/healthImport.ts` | Apple Health → Measurements: `parseHealthText`, `parseHealthDate`, `parseWeightKg`, `parseBodyFatPct`, `groupWeighIns`, `planHealthImport`, `applyHealthImport(plan)`, `deleteMeasurement(entry)` (THE delete; tombstones Apple Health weigh-ins), `healthSampleAt`, `editedMeasurement(entry, changes, edited)` (THE way to save a user edit of a measurement), `HEALTH_SKIP_LABEL`, `HEALTH_IMPORT_SHORTCUT`, `importShortcutUrl()`, `HEALTH_TEMPLATE_LINES` / `healthTemplateText()`, `localDayKey` |
+| `lib/healthInbox.ts` | automatic sync: `INBOX`, `INBOX_COMMENTS_URL`, `getInboxToken` / `setInboxToken` / `clearInboxToken`, `testInboxToken`, `checkInboxNow`, `useInboxStatus`, `inboxMessage`, `inboxImportMessage` (see "Automatic sync") |
 | `lib/media.ts` | `saveImageFile(file)` → media id (downscaled JPEG), `deleteMedia`, `useMediaUrl`, `useMediaUrls`, `useExerciseImages(ex)` |
 | `lib/workouts.ts` | `saveWorkout(w)` (derives totals + recomputes PRs), `deleteWorkout`, `recomputeAllPRs`, `deriveWorkout`, `loadTypeLookup`, `useWorkouts()` (newest first), `useWorkout(id)`, `useExerciseWorkouts(exerciseId)` (oldest first), `createRoutineFromWorkout`, `workoutToRoutineExercises`, `defaultWorkoutName` |
 | `lib/routines.ts` | `useRoutines`, `useRoutine`, `useFolders`, `newRoutineSet`, `newRoutineExercise`, `createRoutine`, `saveRoutine`, `deleteRoutine`, `duplicateRoutine`, `createFolder`, `renameFolder`, `deleteFolder`; "Update routine": `planRoutineUpdate(routine, workout, variantSplits?)` → `{exercises, changed, swaps, added}` and `updateRoutineFromWorkout(id, workout, variantSplits?)` (building blocks `pairWorkoutWithRoutine`, `workoutForRoutineUpdate`, `mergeWorkoutIntoRoutine`, `routineExerciseSwaps`, `workoutDiffersFromRoutine`) |
@@ -143,14 +144,16 @@ A future native build (HealthKit) should reuse `healthPayload()`.
 ### Import from Apple Health (weigh-ins, `lib/healthImport.ts`)
 The other direction: the owner's Hume Health scale (Body Pod) writes Weight and Body Fat Percentage to Apple Health,
 and a second Shortcut, **"Health to Heft"** (`HEALTH_IMPORT_SHORTCUT`; guide in the second half of
-`/settings/apple-health`, `?to=weigh-ins` scrolls there), brings the latest weigh-in into Measurements. The bridge is
-the **clipboard**: two Find Health Samples actions (Weight, then Body Fat Percentage; sorted by Start Date, latest
-first, limit 1; the guide has the user widen or drop the action's default Start Date filter, and Clear the second
+`/settings/apple-health`, `?to=weigh-ins` scrolls there), brings EVERY weigh-in of the last 30 days into Measurements:
+automatically through the GitHub inbox (see "Automatic sync" below), or by hand through the **clipboard**. Two Find
+Health Samples actions (Weight, then Body Fat Percentage; Start Date in the last 30 days, sorted latest first, no
+limit; the guide has the user Clear the second
 action's auto-wired input, because added under the first it becomes "Filter Health Samples" over the weight and finds
 no body fat) → a Text action with the template `heft-health` / `weight: …` / `weight date: …` / `body fat: …` /
 `body fat date: …` (`HEALTH_TEMPLATE_LINES`; date bubbles = Start Date, Date Format ISO 8601 with time, which reads the
-same in every region) → Copy to Clipboard. A Shortcut must **never** return by opening a Heft URL: that lands in Safari,
-whose storage is separate from the home-screen app.
+same in every region; a list variable writes one value per line under its key, paired with the dates by position) →
+Copy to Clipboard → Get Contents of URL (the inbox POST). A Shortcut must **never** return by opening a Heft URL: that
+lands in Safari, whose storage is separate from the home-screen app.
 - UI: the flow lives in ONE hook, `features/progress/components/useHealthImport.tsx` (`useHealthImport(unit)` → handlers,
   status flags and the paste/preview `sheet` node; it marks `lib/busy.ts` while the Shortcut is open so a waiting app
   update can't reload Heft behind it). Two places use it: `HealthImportCard.tsx` on `/progress/measurements` and the
@@ -174,27 +177,50 @@ whose storage is separate from the home-screen app.
   and without weight/body-fat keys, so random clipboard text is rejected; the generic keys `fat` / `mass` / `bf`
   (`WEAK_KEYS`) don't count on their own, so a nutrition label ("Fat: 12 g") is rejected too. Weight 20–400 kg (the
   error shows the range in the user's unit), body fat 1–75 %, else dropped with an error.
-- `planHealthImport(samples, existing, settings, {reimportAll?})` → `{add, update, skipped: {reason, at}[],
-  importedThrough}`, one LOCAL day at a time: anchor = the day's earliest weight (body fat within 10 min rides along,
-  else the day's earliest body fat; a body-fat-only day makes a body-fat-only row); id `hk_<anchor ms>`,
-  `source: 'health'`, `healthAt`. **Manual wins**: a day with a non-health row that has a body weight is skipped whole
-  (`manual`). An existing imported row is updated only when its values differ (`unchanged` otherwise; a later weigh-in
-  the same day only fills a missing value, `later`). When a time-zone change puts two imported rows on one local day,
-  the row whose anchor matches a sample is refreshed and values are filled only from the same weigh-in. **Deletes
-  stick**: a sample at or before `Settings.healthImportedThrough` never creates a row (`old`) unless `reimportAll` (the
-  preview's "Bring deleted weigh-ins back"); a weight within 10 min of the day's imported row (a body-fat-only row
-  whose fat synced first) joins that row instead, since it is the same weigh-in. `importedThrough` = the newest sample
-  written into a row or already held by one (never a `manual` / `edited` / `later` skip), so a skipped sample never
-  blocks a later legitimate import.
-- `applyHealthImport(plan)`: ONE `rw` transaction on measurements + settings (bulkPut, watermark = max(stored,
-  `plan.importedThrough`), `healthImportedAt` = now; a plan that writes nothing and moves no watermark leaves settings
-  alone). It never writes the profile weight: calories and Food targets already follow the newest weigh-in through
-  `pickBodyweightKg`, and a newer hand-typed profile weight still wins.
+- **Every weigh-in is its own row** (since 2026-10-06; the owner: every time they step on the scale all the data should
+  transfer, and they can delete a weigh-in that isn't accurate). `groupWeighIns(samples)`: each weight is one weigh-in;
+  body fat within 10 min (`SAME_WEIGH_IN_MS`) joins the nearest weight; leftover body fat is a body-fat-only weigh-in.
+  `planHealthImport(samples, existing, settings, {reimportAll?})` → `{add, update, skipped: {reason, at}[],
+  importedThrough, clearDeleted}`: a weigh-in finds its row by the sample time (`hk_<ms>` id or `healthAt`, within 1 s;
+  rows from the old one-per-day import are recognised the same way); a body-fat-only row whose weight synced later is
+  joined by it (only if they agree). Skips: `edited` (the user edited that row: never overwritten), `unchanged`,
+  `deleted`. Typed rows never block anything. A value the paste doesn't carry is never cleared.
+- **Deletes stick**: `deleteMeasurement(entry)` (THE delete: Measurements' sheet and Today's Weigh-ins sheet) removes the
+  row and its photos and adds its Apple Health sample time (`healthSampleAt`) to `Settings.healthDeleted`; each such
+  tombstone holds back the ONE weigh-in nearest to it within 10 min (so a re-weigh a few minutes after a deleted bad
+  reading still comes in). The paste preview's "Bring deleted weigh-ins back" (`reimportAll`) restores them and lifts
+  only those tombstones (`plan.clearDeleted`). Rows deleted before tombstones existed may come back once.
+- `applyHealthImport(plan)`: ONE `rw` transaction; it re-checks the database first (a row edited or deleted since the plan
+  was made is left alone) and returns the rows actually written. `healthImportedAt` = now when it wrote rows;
+  `healthImportedThrough` = the newest sample Heft holds (display only). It never writes the profile weight: calories and
+  Food targets follow the newest weigh-in through `pickBodyweightKg`, and a newer hand-typed profile weight still wins.
 - `Measurement.source` (`'manual' | 'health'`, missing = manual) and `healthAt` are not indexed (no Dexie version
-  bump); they ride in backups unchanged, as do `Settings.healthImportedThrough` / `healthImportedAt`. Any user edit of
+  bump); they ride in backups unchanged, as do `Settings.healthImportedThrough` / `healthImportedAt` / `healthDeleted`. Any user edit of
   a health row makes it `'manual'`: `MeasurementSheet` saves through `editedMeasurement(entry, changes, dirty)`
   (starts from the stored row, so unknown fields survive) and Settings' body-weight edit of today's weigh-in sets
   `source: 'manual'` too.
+
+### Automatic sync (the GitHub inbox, `lib/healthInbox.ts`)
+A web app can't read HealthKit in the background, so the owner's iPhone does the pushing: a Shortcuts personal automation
+(App → Hume Health → **Is Closed** → Run Immediately, Notify off → "Health to Heft") ends with **Get Contents of URL**:
+POST `{"body": <heft-health text>}` to `INBOX_COMMENTS_URL`, a comment on issue #1 of the owner's PRIVATE repo
+`2ndchanceproductions8-cmd/heft-inbox` (`INBOX`), with a fine-grained GitHub token (that repo only; Issues read/write).
+- Heft holds the same token ONLY in localStorage (`heft-key:github-inbox`; never Dexie, a backup, a log or a URL; shown
+  masked; "Delete all data" clears it; `lib/secrets.guard.test.ts` fails on a real-looking token under `src/`). The repo
+  and the Pages site are PUBLIC: fixtures use obvious fakes.
+- `checkInboxNow()` (single-flight, never throws): GET the comments (paged, `cache: 'no-store'`, 15 s timeout, headers
+  Authorization Bearer + `Accept: application/vnd.github+json` + `X-GitHub-Api-Version: 2022-11-28`, which pass CORS),
+  `parseHealthText` each, plan + apply ONE import, then DELETE the comments it read (only after the commit; a failed
+  delete is harmless because re-reading is idempotent). Comments that aren't heft-health text are left alone. 401/403 →
+  `token_rejected`, 404 → `not_found` (the token can't see the repo), network → `offline`.
+- `HealthInboxWatcher` (mounted in RootLayout) checks on launch, when Heft comes back on screen and when the connection
+  returns (at most once per 15 s, never while hidden or offline), plus two follow-ups (16 s, 45 s) because the Shortcut
+  posts when Hume CLOSES, often just after Heft opens. It toasts what came in ("From Hume: 184.2 lb · 19.4% body fat")
+  and one error toast when the key stops working. `useInboxStatus()` feeds Today's Hume row and the Settings page.
+- Setup guide: `/settings/apple-health?to=auto` (make the key, paste + Test it, the Shortcut's extra step, the
+  automation, try it). Verified 2026-10-06 in the browser with a stubbed GitHub: an automatic check on foreground, no
+  duplicates on a 30-day re-send, the comment deleted, a deleted weigh-in held back on re-send. The real iPhone
+  automation is untested until the owner runs it.
 
 ## Food tab (nutrition)
 A port of SnapPlate. Log a meal by **photo or description** (Claude names the foods and estimates grams, USDA
@@ -356,10 +382,12 @@ them on one screen, each card one tap from its own tab. `TodayPage` renders four
 imported eagerly, because it is the landing page. `today` = `useTodayKey()` (rolls over at midnight / app wake), `now`
 moves on wake. Live reads: `features/today/data.ts` (`useMeasurements`, `useMealsInDays`) plus the existing hooks. Every
 card exports a pure `…View` for the server-render tests (`features/today/*.render.test.ts`).
-- **Body** (`BodyCard`, `body/*`): the latest weigh-in (`dailyWeighIns`, same manual-wins rule as the Health import), the
+- **Body** (`BodyCard`, `body/*`): the latest weigh-in (`dailyWeighIns`: a typed row, else the day's latest reading;
+  tapping it opens the Weigh-ins sheet, `body/WeighInsSheet.tsx`: 14 days, "Counts for the day", Delete per row), the
   pace pill (`weeklyRateKg`, 28-day least squares; green only when it agrees with the goal pace `goalRateKgPerWeek` from
   the final targets), trend weight (EMA, 10 %/day), body fat with its 4-week change (needs readings across 21+ days), a
-  30-day chart, a stale nudge after 7 days, and on iPhone the Hume row (`useHealthImport`: Get from Health / Paste).
+  30-day chart, a stale nudge after 7 days, and the Hume row (`body/HumeSync.tsx`): automatic-sync status + Check now
+  when a token is saved on the device, else (iPhone) Get from Health / Paste + "Make it automatic".
 - **Food** (`FuelCard`, `fuel/*`): today's ring and macros, the same numbers as the Diary (only `done` meals count; budget =
   `remaining(target, eaten)`, burn never added), today's unfinished meals (an analysis cut off by iOS reads "needs a
   retry", via `lib/nutrition/running.ts`), Snap a meal / Scan.
