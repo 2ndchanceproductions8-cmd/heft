@@ -1,7 +1,8 @@
-import type { Routine, RoutineExercise, RoutineSet, SetEntry, SetType, Settings, Workout } from '../../types';
-import { previousInstanceSets } from '../../lib/calc';
+import type { Routine, RoutineExercise, RoutineSet, SetEntry, SetType, Settings, SideValues, Workout } from '../../types';
+import { isSideSet, previousInstanceSets } from '../../lib/calc';
 import { setNumberLabels, type TypeFields } from '../../lib/exerciseMeta';
 import { uid } from '../../lib/ids';
+import { copySides } from '../../lib/sides';
 import type { PickedExercise } from '../../lib/workoutStore';
 
 /*
@@ -146,6 +147,7 @@ export function nextSet(sets: RoutineSet[]): RoutineSet {
     repsMax: last.repsMax ?? null,
     durationSec: last.durationSec ?? null,
     distanceM: last.distanceM ?? null,
+    ...(last.sides ? { sides: copySides(last) } : {}),
   });
 }
 
@@ -157,14 +159,15 @@ export function fitSetsToFields(
   sets: RoutineSet[],
   f: { weight: boolean; reps: boolean; duration: boolean; distance: boolean },
 ): RoutineSet[] {
-  return sets.map((s) => ({
-    ...s,
-    weightKg: f.weight ? s.weightKg ?? null : null,
-    reps: f.reps ? s.reps ?? null : null,
-    repsMax: f.reps ? s.repsMax ?? null : null,
-    durationSec: f.duration ? s.durationSec ?? null : null,
-    distanceM: f.distance ? s.distanceM ?? null : null,
-  }));
+  const fit = <T extends SideValues>(v: T): T => ({
+    ...v,
+    weightKg: f.weight ? v.weightKg ?? null : null,
+    reps: f.reps ? v.reps ?? null : null,
+    repsMax: f.reps ? v.repsMax ?? null : null,
+    durationSec: f.duration ? v.durationSec ?? null : null,
+    distanceM: f.distance ? v.distanceM ?? null : null,
+  });
+  return sets.map((s) => ({ ...fit(s), ...(s.sides ? { sides: { left: fit(s.sides.left), right: fit(s.sides.right) } } : {}) }));
 }
 
 /** Routine sets mirroring a previous workout session (types and values). */
@@ -176,6 +179,7 @@ export function routineSetsFromPrevious(prev: SetEntry[]): RoutineSet[] {
       reps: s.reps ?? null,
       durationSec: s.durationSec ?? null,
       distanceM: s.distanceM ?? null,
+      ...(isSideSet(s) ? { sides: copySides(s) } : {}),
     }),
   );
 }
@@ -188,7 +192,7 @@ export function copyRoutineExercise(re: RoutineExercise): RoutineExercise {
     notes: re.notes,
     restSec: re.restSec ?? null,
     supersetId: null,
-    sets: re.sets.map((s) => ({ ...s, id: uid() })),
+    sets: re.sets.map((s) => ({ ...s, id: uid(), ...(s.sides ? { sides: copySides(s) } : {}) })),
   };
 }
 
@@ -201,7 +205,11 @@ export function copyRoutineExercise(re: RoutineExercise): RoutineExercise {
 export function routineExerciseFromSource(src: RoutineExercise, exerciseId: string, fields?: TypeFields): RoutineExercise {
   const copy = { ...copyRoutineExercise(src), exerciseId, notes: src.notes ?? '' };
   if (exerciseId === src.exerciseId) return copy;
-  const sets = copy.sets.map((s) => ({ ...s, weightKg: null }));
+  const sets = copy.sets.map((s) => ({
+    ...s,
+    weightKg: null,
+    ...(s.sides ? { sides: { left: { ...s.sides.left, weightKg: null }, right: { ...s.sides.right, weightKg: null } } } : {}),
+  }));
   return { ...copy, sets: fields ? fitSetsToFields(sets, fields) : sets };
 }
 

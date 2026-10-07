@@ -78,7 +78,8 @@ export function routineSetsSummary(
   if (!n) return parts[0];
   const f = typeFields(type);
   const work = sets.filter((s) => s.type !== 'warmup');
-  const pool = work.length ? work : sets;
+  // Every planned limb: a per-side set's left and right, else the set itself.
+  const pool: SideValues[] = (work.length ? work : sets).flatMap((s) => (s.sides ? [s.sides.left, s.sides.right] : [s]));
 
   if (f.reps) {
     const lows = pool.map((s) => s.reps).filter(has);

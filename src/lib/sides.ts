@@ -1,4 +1,4 @@
-import type { ExerciseType, SetEntry, SetSides, SetTarget, Side, SideValues } from '../types';
+import type { ExerciseType, SetSides, SetTarget, Side, SideValues } from '../types';
 import { estimate1RM, isSideSet, sideMetricFor } from './calc';
 
 /*
@@ -18,14 +18,30 @@ export const SIDES: readonly Side[] = ['left', 'right'];
 export const SIDE_LETTER: Record<Side, string> = { left: 'L', right: 'R' };
 export const SIDE_LABEL: Record<Side, string> = { left: 'Left', right: 'Right' };
 
+/** Anything carrying side-able values: a logged set, a routine set, a target. */
+export type SideHost = SideValues & { sides?: SetSides | null };
+
+/** The four logged values of one side (nulls for missing ones). */
+export type LimbValues = {
+  weightKg: number | null;
+  reps: number | null;
+  durationSec: number | null;
+  distanceM: number | null;
+};
+
 /** Just the four values (nulls for missing ones). */
-export function valuesOf(v: SideValues | null | undefined): Required<SideValues> {
+export function valuesOf(v: SideValues | null | undefined): LimbValues {
   return {
     weightKg: v?.weightKg ?? null,
     reps: v?.reps ?? null,
     durationSec: v?.durationSec ?? null,
     distanceM: v?.distanceM ?? null,
   };
+}
+
+/** One side's values for a PLAN: the four values plus the rep range's top when it has one. */
+function planValuesOf(v: SideValues | null | undefined): SideValues {
+  return v?.repsMax != null ? { ...valuesOf(v), repsMax: v.repsMax } : valuesOf(v);
 }
 
 export function hasSideValue(v: SideValues | null | undefined): boolean {
@@ -59,47 +75,65 @@ export function betterSide(sides: SetSides, type: ExerciseType = 'weight_reps'):
   return 'left';
 }
 
-/** Recompute a per-side set's mirror (its top-level values = its better side). A plain set is returned as is. */
-export function syncSideSet<T extends SetEntry>(s: T, type?: ExerciseType): T {
+/**
+ * Recompute a per-side set's mirror (its top-level values = its better side; a plan's rep range too). A plain set
+ * is returned as is. Works for logged sets and routine sets alike.
+ */
+export function syncSideSet<T extends SideHost>(s: T, type?: ExerciseType): T {
   if (!isSideSet(s)) return s;
-  return { ...s, ...valuesOf(s.sides[betterSide(s.sides, type)]) };
+  const better = s.sides[betterSide(s.sides, type)];
+  const mirror: SideValues = valuesOf(better);
+  // Only a plan carries a rep range; a logged set never gets a repsMax field it didn't have.
+  if (better.repsMax != null || s.repsMax != null) mirror.repsMax = better.repsMax ?? null;
+  return { ...s, ...mirror };
 }
 
 function splitSides(v: SideValues): SetSides {
-  return { left: valuesOf(v), right: valuesOf(v) };
+  return { left: planValuesOf(v), right: planValuesOf(v) };
 }
 
 /** A plain set made per-side: both sides start from its values (a plain "50 lb x 10" meant each side). */
-export function splitSet(s: SetEntry, type?: ExerciseType): SetEntry {
+export function splitSet<T extends SideHost>(s: T, type?: ExerciseType): T {
   if (isSideSet(s)) return s;
   return syncSideSet({ ...s, sides: splitSides(s) }, type);
 }
 
 /** A per-side set made plain again: it keeps its better side's values. */
-export function joinSet(s: SetEntry, type?: ExerciseType): SetEntry {
+export function joinSet<T extends SideHost>(s: T, type?: ExerciseType): T {
   if (!isSideSet(s)) return s;
   const { sides: _sides, ...plain } = syncSideSet(s, type);
-  return plain;
+  return plain as T;
 }
 
 /** True when joining would lose information (the two sides differ). */
-export function sidesDiffer(s: SetEntry): boolean {
+export function sidesDiffer(s: SideHost): boolean {
   if (!isSideSet(s)) return false;
-  const a = valuesOf(s.sides.left);
-  const b = valuesOf(s.sides.right);
-  return a.weightKg !== b.weightKg || a.reps !== b.reps || a.durationSec !== b.durationSec || a.distanceM !== b.distanceM;
+  const a = planValuesOf(s.sides.left);
+  const b = planValuesOf(s.sides.right);
+  return (
+    a.weightKg !== b.weightKg ||
+    a.reps !== b.reps ||
+    (a.repsMax ?? null) !== (b.repsMax ?? null) ||
+    a.durationSec !== b.durationSec ||
+    a.distanceM !== b.distanceM
+  );
 }
 
 /** The set with one side patched (a plain set is split first, so the other side keeps the shared values). */
-export function patchSide(s: SetEntry, side: Side, patch: SideValues, type?: ExerciseType): SetEntry {
+export function patchSide<T extends SideHost>(s: T, side: Side, patch: SideValues, type?: ExerciseType): T {
   const sides = isSideSet(s) ? s.sides : splitSides(s);
-  return syncSideSet({ ...s, sides: { ...sides, [side]: { ...valuesOf(sides[side]), ...patch } } }, type);
+  return syncSideSet({ ...s, sides: { ...sides, [side]: { ...planValuesOf(sides[side]), ...patch } } }, type);
 }
 
 /** One side's values of a set: its own side, or the plain values (which applied to each side). */
-export function sideOf(s: SetEntry | null | undefined, side: Side): SideValues | null {
+export function sideOf(s: SideHost | null | undefined, side: Side): SideValues | null {
   if (!s) return null;
   return isSideSet(s) ? s.sides[side] : s;
+}
+
+/** Both sides of a set as a plan copy (a plain set planned each side with its values). */
+export function copySides(s: SideHost): SetSides | null {
+  return isSideSet(s) ? { left: planValuesOf(s.sides.left), right: planValuesOf(s.sides.right) } : null;
 }
 
 /** One side's planned values: its own (last session's left/right), else the plain plan (incl. a rep range). */

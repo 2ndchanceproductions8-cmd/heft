@@ -1,9 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import type { ExerciseType, Routine, RoutineExercise, Workout, WorkoutExercise } from '../types';
-import { computeAllPRs, countDoneSets, workoutVolumeKg } from './calc';
+import { computeAllPRs, countDoneSets, isSideSet, workoutVolumeKg } from './calc';
 import { CATALOG_BY_ID } from './exercises';
 import { uid } from './ids';
+import { copySides } from './sides';
 
 /** Exercise type lookup straight from the DB/catalog (for code running outside React). */
 export async function loadTypeLookup(): Promise<(id: string) => ExerciseType> {
@@ -85,6 +86,7 @@ export function workoutToRoutineExercises(exercises: WorkoutExercise[]): Routine
       reps: s.reps ?? null,
       durationSec: s.durationSec ?? null,
       distanceM: s.distanceM ?? null,
+      ...(isSideSet(s) ? { sides: copySides(s) } : {}),
     })),
   }));
 }

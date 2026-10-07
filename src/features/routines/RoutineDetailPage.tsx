@@ -1,15 +1,17 @@
-import { memo, useRef, useState } from 'react';
+import { Fragment, memo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ClipboardX, Copy, Folder, FolderInput, MoreHorizontal, Pencil, Play, Timer, Trash2 } from 'lucide-react';
 import { ActionSheet, Button, EmptyState, IconButton, Loading, Page, SectionHeader, TopBar, cx } from '../../components/ui';
 import { ExerciseThumb } from '../../components/ExerciseImage';
 import { useExercises } from '../../lib/ExerciseProvider';
+import { isSideSet } from '../../lib/calc';
 import { typeFields } from '../../lib/exerciseMeta';
+import { SIDE_LETTER, SIDES, sideOf } from '../../lib/sides';
 import { restSettingLabel } from '../../lib/rest';
 import { useFolders, useRoutine, useRoutineLastPerformed } from '../../lib/routines';
 import { useSettings } from '../../lib/settings';
 import { distanceUnitForType, formatClock, formatDistanceForType, formatWeight } from '../../lib/units';
-import type { DistanceUnit, Exercise, RoutineExercise, Unit } from '../../types';
+import type { DistanceUnit, Exercise, RoutineExercise, Side, SideValues, Unit } from '../../types';
 import { BackButton, BarTextButton } from './BarButtons';
 import { MoveToFolderSheet } from './MoveToFolderSheet';
 import { lastPerformedLabel } from './RoutineCard';
@@ -235,7 +237,25 @@ const ExerciseView = memo(function ExerciseView({
   if (f.reps) cols.push({ key: 'r', label: 'REPS' });
   if (f.distance) cols.push({ key: 'd', label: du.toUpperCase() });
   if (f.duration) cols.push({ key: 't', label: 'TIME' });
-  const grid = { gridTemplateColumns: `2.5rem repeat(${cols.length - 1}, minmax(0, 1fr))` };
+  // Left / right: an L and an R line per set (a plain set planned each side with its values).
+  const perSide = exercise.perSide || re.sets.some((s) => isSideSet(s));
+  const grid = { gridTemplateColumns: `2.5rem ${perSide ? '0.75rem ' : ''}repeat(${cols.length - 1}, minmax(0, 1fr))` };
+  const values = (v: SideValues, key: string) => (
+    <Fragment key={key}>
+      {f.weight ? <Value text={v.weightKg != null ? formatWeight(v.weightKg, unit, false) : ''} /> : null}
+      {f.reps ? <Value text={formatReps(v.reps, v.repsMax)} /> : null}
+      {f.distance ? <Value text={v.distanceM != null ? formatDistanceForType(v.distanceM, exercise.type, distanceUnit, false) : ''} /> : null}
+      {f.duration ? <Value text={v.durationSec != null ? formatClock(v.durationSec) : ''} /> : null}
+    </Fragment>
+  );
+  const sideLine = (s: RoutineExercise['sets'][number], side: Side) => (
+    <Fragment key={side}>
+      <span aria-hidden className="text-center text-[12px] font-bold text-muted">
+        {SIDE_LETTER[side]}
+      </span>
+      {values(sideOf(s, side) ?? {}, side)}
+    </Fragment>
+  );
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-surface p-4">
@@ -259,23 +279,25 @@ const ExerciseView = memo(function ExerciseView({
       {re.sets.length ? (
         <div className="mt-3">
           <div className="grid gap-2 px-0.5 pb-1 text-[12px] font-semibold tracking-wide text-muted" style={grid}>
-            {cols.map((c) => (
-              <div key={c.key} className="text-center">
-                {c.label}
-              </div>
+            {cols.map((c, i) => (
+              <Fragment key={c.key}>
+                <div className="text-center">{c.label}</div>
+                {i === 0 && perSide ? <div aria-hidden /> : null}
+              </Fragment>
             ))}
           </div>
           {re.sets.map((s, i) => (
-            <div key={s.id} className={cx('grid items-center gap-2 rounded-lg px-0.5 py-1.5', i % 2 === 1 && 'bg-surface-2/60')} style={grid}>
-              <div className="flex justify-center">
+            <div
+              key={s.id}
+              className={cx('grid items-center gap-x-2 rounded-lg px-0.5 py-1.5', perSide && 'gap-y-1', i % 2 === 1 && 'bg-surface-2/60')}
+              style={grid}
+            >
+              <div className="flex justify-center" style={perSide ? { gridRow: 'span 2' } : undefined}>
                 <span className={cx('flex h-7 w-7 items-center justify-center rounded-md text-[14px] font-bold tabular-nums', SET_BADGE_CLASS[s.type])}>
                   {badges[i]}
                 </span>
               </div>
-              {f.weight ? <Value text={s.weightKg != null ? formatWeight(s.weightKg, unit, false) : ''} /> : null}
-              {f.reps ? <Value text={formatReps(s.reps, s.repsMax)} /> : null}
-              {f.distance ? <Value text={s.distanceM != null ? formatDistanceForType(s.distanceM, exercise.type, distanceUnit, false) : ''} /> : null}
-              {f.duration ? <Value text={s.durationSec != null ? formatClock(s.durationSec) : ''} /> : null}
+              {perSide ? SIDES.map((side) => sideLine(s, side)) : values(s, 'set')}
             </div>
           ))}
         </div>

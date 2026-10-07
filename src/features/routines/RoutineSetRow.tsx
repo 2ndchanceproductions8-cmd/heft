@@ -1,18 +1,19 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Trash2 } from 'lucide-react';
 import { DurationCell, NumberCell, cx } from '../../components/ui';
 import type { TypeFields } from '../../lib/exerciseMeta';
+import { patchSide, SIDE_LABEL, SIDE_LETTER, sideOf } from '../../lib/sides';
 import { anyToMeters, displayWeight, metersToAny, round, unitToKg, type AnyDistanceUnit } from '../../lib/units';
-import type { RoutineSet, Unit } from '../../types';
+import type { ExerciseType, RoutineSet, Side, SideValues, Unit } from '../../types';
 import { SET_BADGE_CLASS, formatReps, normalizeRepsText, parseRepsInput } from './routineUtils';
 
 // Same look as the foundation NumberCell so mixed rows line up.
 const cellClass =
   'h-9 w-full min-w-0 rounded-lg bg-surface-2 px-1 text-center text-[16px] font-semibold tabular-nums text-fg outline-none placeholder:font-semibold placeholder:text-faint focus:bg-surface-3 focus:ring-2 focus:ring-accent/60';
 
-/** Grid template shared by the set table header and its rows. */
-export function setGridStyle(valueColumns: number) {
-  return { gridTemplateColumns: `2.5rem repeat(${valueColumns}, minmax(0, 1fr))` };
+/** Grid template shared by the set table header and its rows (per-side tables add a narrow L / R column). */
+export function setGridStyle(valueColumns: number, perSide = false) {
+  return { gridTemplateColumns: `2.5rem ${perSide ? '0.75rem ' : ''}repeat(${valueColumns}, minmax(0, 1fr))` };
 }
 
 /**
@@ -165,7 +166,11 @@ export function SwipeToDelete({ onDelete, children, className }: { onDelete: () 
   );
 }
 
-/** One planned set in the routine editor: badge | weight | reps (or range) | distance | time. */
+/**
+ * One planned set in the routine editor: badge | weight | reps (or range) | distance | time. A per-side exercise
+ * (or a set that already plans both sides) gets two lines, L and R, each with its own values; the badge spans both.
+ * A plain set shows its values on both lines and splits the first time one side is edited (lib/sides.ts patchSide).
+ */
 export const RoutineSetRow = memo(function RoutineSetRow({
   set,
   index,
@@ -173,6 +178,8 @@ export const RoutineSetRow = memo(function RoutineSetRow({
   fields,
   unit,
   distanceUnit,
+  perSide = false,
+  exerciseType,
   onChange,
   onBadge,
   onDelete,
@@ -184,61 +191,97 @@ export const RoutineSetRow = memo(function RoutineSetRow({
   unit: Unit;
   /** The exercise's distance unit (distanceUnitForType): yd/m for carries and sleds, mi/km otherwise. */
   distanceUnit: AnyDistanceUnit;
+  /** Plan left and right separately (the whole table: the exercise is per-side or a set already has sides). */
+  perSide?: boolean;
+  /** For picking the better side that the set's top-level values mirror. */
+  exerciseType?: ExerciseType;
   onChange: (setId: string, patch: Partial<RoutineSet>) => void;
   onBadge: (setId: string) => void;
   onDelete: (setId: string) => void;
 }) {
   const cols = [fields.weight, fields.reps, fields.distance, fields.duration].filter(Boolean).length;
   const n = index + 1;
+
+  /** Write one line's values: a side (splitting a plain set first, then re-syncing the mirror), else the set. */
+  const change = (side: Side | null, patch: SideValues) => {
+    if (!side) {
+      onChange(set.id, patch);
+      return;
+    }
+    const next = patchSide(set, side, patch, exerciseType);
+    onChange(set.id, {
+      sides: next.sides,
+      weightKg: next.weightKg ?? null,
+      reps: next.reps ?? null,
+      repsMax: next.repsMax ?? null,
+      durationSec: next.durationSec ?? null,
+      distanceM: next.distanceM ?? null,
+    });
+  };
+
+  const line = (side: Side | null) => {
+    const v = (side ? sideOf(set, side) : set) ?? {};
+    const what = side ? `Set ${n} ${SIDE_LABEL[side].toLowerCase()}` : `Set ${n}`;
+    return (
+      <Fragment key={side ?? 'set'}>
+        {side ? (
+          <span aria-hidden className="text-center text-[12px] font-bold text-muted">
+            {SIDE_LETTER[side]}
+          </span>
+        ) : null}
+        {fields.weight ? (
+          <NumberCell
+            ariaLabel={`${what} weight (${unit})`}
+            value={displayWeight(v.weightKg, unit)}
+            placeholder="-"
+            onChange={(x) => change(side, { weightKg: x == null ? null : unitToKg(x, unit) })}
+          />
+        ) : null}
+        {fields.reps ? <RepsCell ariaLabel={`${what} reps`} reps={v.reps} repsMax={v.repsMax} onChange={(x) => change(side, x)} /> : null}
+        {fields.distance ? (
+          <NumberCell
+            ariaLabel={`${what} distance (${distanceUnit})`}
+            // Edited at 2 dp like the logger's cell (displayDistanceAny rounds yd/m to 1 dp for display only).
+            value={v.distanceM == null ? null : round(metersToAny(v.distanceM, distanceUnit), 2)}
+            placeholder="-"
+            onChange={(x) => change(side, { distanceM: x == null ? null : anyToMeters(x, distanceUnit) })}
+          />
+        ) : null}
+        {fields.duration ? (
+          <DurationCell ariaLabel={`${what} time`} value={v.durationSec} placeholder="0:00" onChange={(x) => change(side, { durationSec: x })} />
+        ) : null}
+      </Fragment>
+    );
+  };
+
   return (
     <SwipeToDelete onDelete={() => onDelete(set.id)}>
-      <div className={cx('grid items-center gap-2 px-0.5 py-1', index % 2 === 1 && 'bg-surface-2/50')} style={setGridStyle(cols)}>
-        <div className="flex justify-center">
+      <div
+        className={cx('grid items-center gap-x-2 px-0.5', perSide ? 'gap-y-1 py-1.5' : 'py-1', index % 2 === 1 && 'bg-surface-2/50')}
+        style={setGridStyle(cols, perSide)}
+      >
+        <div className="flex h-full justify-center" style={perSide ? { gridRow: 'span 2' } : undefined}>
           <button
             type="button"
             onClick={() => onBadge(set.id)}
             aria-label={`Set ${n} options`}
             className={cx(
-              'flex h-9 w-9 items-center justify-center rounded-lg text-[15px] font-bold tabular-nums transition-[filter] active:brightness-90',
+              'flex w-9 items-center justify-center rounded-lg text-[15px] font-bold tabular-nums transition-[filter] active:brightness-90',
+              perSide ? 'h-full min-h-9' : 'h-9',
               SET_BADGE_CLASS[set.type],
             )}
           >
             {badge}
           </button>
         </div>
-        {fields.weight ? (
-          <NumberCell
-            ariaLabel={`Set ${n} weight (${unit})`}
-            value={displayWeight(set.weightKg, unit)}
-            placeholder="-"
-            onChange={(v) => onChange(set.id, { weightKg: v == null ? null : unitToKg(v, unit) })}
-          />
-        ) : null}
-        {fields.reps ? (
-          <RepsCell
-            ariaLabel={`Set ${n} reps`}
-            reps={set.reps}
-            repsMax={set.repsMax}
-            onChange={(v) => onChange(set.id, v)}
-          />
-        ) : null}
-        {fields.distance ? (
-          <NumberCell
-            ariaLabel={`Set ${n} distance (${distanceUnit})`}
-            // Edited at 2 dp like the logger's cell (displayDistanceAny rounds yd/m to 1 dp for display only).
-            value={set.distanceM == null ? null : round(metersToAny(set.distanceM, distanceUnit), 2)}
-            placeholder="-"
-            onChange={(v) => onChange(set.id, { distanceM: v == null ? null : anyToMeters(v, distanceUnit) })}
-          />
-        ) : null}
-        {fields.duration ? (
-          <DurationCell
-            ariaLabel={`Set ${n} time`}
-            value={set.durationSec}
-            placeholder="0:00"
-            onChange={(v) => onChange(set.id, { durationSec: v })}
-          />
-        ) : null}
+        {perSide ? (
+          <>
+            {line('left')}
+            {line('right')}
+          </>
+        ) : (
+          line(null)
+        )}
       </div>
     </SwipeToDelete>
   );

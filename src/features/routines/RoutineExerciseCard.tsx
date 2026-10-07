@@ -1,9 +1,11 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { ArrowLeftRight, ArrowUpDown, ChevronDown, Link2, Link2Off, MoreHorizontal, Plus, Repeat2, Trash2 } from 'lucide-react';
-import { ActionSheet, IconButton, cx, prompt, toast, type SheetAction } from '../../components/ui';
+import { ActionSheet, IconButton, confirm, cx, prompt, toast, type SheetAction } from '../../components/ui';
 import { ExerciseThumb } from '../../components/ExerciseImage';
 import { SET_TYPE_LABEL, typeFields } from '../../lib/exerciseMeta';
+import { isSideSet } from '../../lib/calc';
 import { setExercisePerSide } from '../../lib/exercises';
+import { joinSet, sidesDiffer } from '../../lib/sides';
 import { distanceUnitForType } from '../../lib/units';
 import type { DistanceUnit, Exercise, RoutineExercise, RoutineSet, SetType, Unit } from '../../types';
 import { AutoTextarea, RestTimerSelect } from './EditorFields';
@@ -79,7 +81,9 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
   if (fields.distance) cols.push({ key: 'd', label: dUnit.toUpperCase() });
   if (fields.duration) cols.push({ key: 't', label: 'TIME' });
 
-  const hasRanges = re.sets.some((s) => s.repsMax != null);
+  // Left / right lines for the whole table: the exercise is per-side, or a set already plans both sides.
+  const perSide = exercise.perSide || re.sets.some((s) => isSideSet(s));
+  const hasRanges = re.sets.some((s) => s.repsMax != null || s.sides?.left.repsMax != null || s.sides?.right.repsMax != null);
   const applyRange = async () => {
     const working = re.sets.find((s) => s.type !== 'warmup' && s.reps != null);
     const v = await prompt({
@@ -92,16 +96,42 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
     });
     if (v == null) return;
     const { reps, repsMax } = parseRepsInput(v);
-    onUpdate(reId, (r) => ({ ...r, sets: r.sets.map((s) => (s.type === 'warmup' ? s : { ...s, reps, repsMax })) }));
+    onUpdate(reId, (r) => ({
+      ...r,
+      sets: r.sets.map((s) =>
+        s.type === 'warmup'
+          ? s
+          : {
+              ...s,
+              reps,
+              repsMax,
+              ...(s.sides ? { sides: { left: { ...s.sides.left, reps, repsMax }, right: { ...s.sides.right, reps, repsMax } } } : {}),
+            },
+      ),
+    }));
   };
 
-  // Left / right is the exercise's own setting (saved right away, for every routine and workout): the plan's
-  // weights and reps then apply to each side.
-  const togglePerSide = () => {
+  // Left / right is the exercise's own setting (saved right away, for every routine and workout). Turning it on shows
+  // an L and an R line per set (each side starts from the set's values); turning it off folds this routine's sets
+  // back into one value each (the better side), after a confirm when the sides differ.
+  const togglePerSide = async () => {
     const next = !exercise.perSide;
-    setExercisePerSide(exercise.id, next)
-      .then(() => toast(next ? `${exercise.name}: left and right logged separately` : `${exercise.name}: both sides together`, 'success'))
-      .catch(() => toast('Could not change the exercise', 'error'));
+    if (!next && re.sets.some(sidesDiffer)) {
+      const ok = await confirm({
+        title: 'Plan both sides together?',
+        message: 'Sets with different left and right values keep their stronger side.',
+        confirmLabel: 'Combine',
+      });
+      if (!ok) return;
+    }
+    try {
+      await setExercisePerSide(exercise.id, next);
+    } catch {
+      toast('Could not change the exercise', 'error');
+      return;
+    }
+    if (!next) onUpdate(reId, (r) => ({ ...r, sets: r.sets.map((s) => joinSet(s, exercise.type)) }));
+    toast(next ? `${exercise.name}: left and right separately` : `${exercise.name}: both sides together`, 'success');
   };
 
   const menuSet = setMenuFor ? re.sets.find((s) => s.id === setMenuFor) : undefined;
@@ -136,7 +166,7 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
         </div>
         <button
           type="button"
-          onClick={togglePerSide}
+          onClick={() => void togglePerSide()}
           aria-pressed={exercise.perSide}
           aria-label={exercise.perSide ? 'Left and right logged separately. Log both sides together' : 'Log left and right separately'}
           className="flex h-10 shrink-0 items-center"
@@ -176,8 +206,9 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
 
       {re.sets.length ? (
         <div className="mt-1">
-          <div className="grid items-center gap-2 px-0.5 pb-1 text-[12px] font-semibold tracking-wide text-muted" style={setGridStyle(cols.length)}>
+          <div className="grid items-center gap-2 px-0.5 pb-1 text-[12px] font-semibold tracking-wide text-muted" style={setGridStyle(cols.length, perSide)}>
             <div className="text-center">SET</div>
+            {perSide ? <div aria-hidden /> : null}
             {cols.map((c) =>
               c.onClick ? (
                 <button
@@ -207,6 +238,8 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
                 fields={fields}
                 unit={unit}
                 distanceUnit={dUnit}
+                perSide={perSide}
+                exerciseType={exercise.type}
                 onChange={updateSet}
                 onBadge={setSetMenuFor}
                 onDelete={deleteSet}
@@ -236,7 +269,7 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
             label: exercise.perSide ? 'Log Both Sides Together' : 'Log Left & Right Separately',
             hint: exercise.perSide ? 'One weight and rep count per set' : 'Its own weight and reps for each side',
             icon: <ArrowLeftRight className="h-5 w-5" />,
-            onClick: togglePerSide,
+            onClick: () => void togglePerSide(),
           },
           { label: 'Replace Exercise', icon: <Repeat2 className="h-5 w-5" />, onClick: () => onAction(reId, 'replace') },
           re.supersetId
@@ -270,7 +303,15 @@ export const RoutineExerciseCard = memo(function RoutineExerciseCard({
             label: 'Clear rep ranges',
             hint: 'Keep the lower number of each range',
             disabled: !hasRanges,
-            onClick: () => onUpdate(reId, (r) => ({ ...r, sets: r.sets.map((s) => ({ ...s, repsMax: null })) })),
+            onClick: () =>
+              onUpdate(reId, (r) => ({
+                ...r,
+                sets: r.sets.map((s) => ({
+                  ...s,
+                  repsMax: null,
+                  ...(s.sides ? { sides: { left: { ...s.sides.left, repsMax: null }, right: { ...s.sides.right, repsMax: null } } } : {}),
+                })),
+              })),
           },
         ]}
       />

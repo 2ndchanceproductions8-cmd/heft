@@ -1,7 +1,9 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import type { Routine, RoutineExercise, RoutineFolder, RoutineSet, SetEntry, Workout, WorkoutExercise } from '../types';
+import type { Routine, RoutineExercise, RoutineFolder, RoutineSet, SetEntry, Side, SideValues, Workout, WorkoutExercise } from '../types';
+import { isSideSet } from './calc';
 import { uid } from './ids';
+import { copySides, SIDES, sideOf, syncSideSet } from './sides';
 
 /** All routines ordered by `order` (then name). */
 export function useRoutines(): Routine[] | undefined {
@@ -91,31 +93,47 @@ export async function deleteFolder(id: string): Promise<void> {
   });
 }
 
-const hasRange = (s: RoutineSet) => s.reps != null && s.repsMax != null && s.repsMax > s.reps;
+const hasRange = (s: SideValues) => s.reps != null && s.repsMax != null && s.repsMax > s.reps;
 
-/** A logged set "matches" its planned set; reps anywhere inside a planned rep range count as matching. */
-const sameSet = (a: RoutineSet, b: SetEntry) =>
-  a.type === b.type &&
+/** One side (or a plain set) matches its plan; reps anywhere inside a planned rep range count as matching. */
+const sameLimb = (a: SideValues, b: SideValues) =>
   (a.weightKg ?? null) === (b.weightKg ?? null) &&
   (hasRange(a) ? b.reps != null && b.reps >= a.reps! && b.reps <= a.repsMax! : (a.reps ?? null) === (b.reps ?? null)) &&
   (a.durationSec ?? null) === (b.durationSec ?? null) &&
   (a.distanceM ?? null) === (b.distanceM ?? null);
 
 /**
- * Planned set updated from a logged one. Rep ranges are kept (only the load changes), but only while the
- * logged set still has reps: after a Replace with a timed or distance exercise the old range must not stick.
+ * A logged set "matches" its planned set. Per-side on either end is compared side by side (a plain plan or a plain
+ * logged set stands for both sides), so new left/right numbers offer to update the routine.
  */
-function plannedFromLogged(s: SetEntry, old: RoutineSet | undefined): RoutineSet {
+const sameSet = (a: RoutineSet, b: SetEntry) =>
+  a.type === b.type &&
+  (isSideSet(a) || isSideSet(b)
+    ? SIDES.every((side) => sameLimb(sideOf(a, side)!, sideOf(b, side)!))
+    : sameLimb(a, b));
+
+/** A planned side (or plain set) from a logged one: the range is kept while the logged side still has reps. */
+function plannedLimb(s: SideValues, old: SideValues | null | undefined): SideValues {
   const keepRange = !!old && hasRange(old) && s.reps != null;
   return {
-    id: old?.id ?? uid(),
-    type: s.type,
     weightKg: s.weightKg ?? null,
     reps: keepRange ? old!.reps : s.reps ?? null,
     repsMax: keepRange ? old!.repsMax : null,
     durationSec: s.durationSec ?? null,
     distanceM: s.distanceM ?? null,
   };
+}
+
+/**
+ * Planned set updated from a logged one. Rep ranges are kept (only the load changes), but only while the
+ * logged set still has reps: after a Replace with a timed or distance exercise the old range must not stick.
+ * A per-side logged set plans each side (keeping that side's range, or the plain plan's).
+ */
+function plannedFromLogged(s: SetEntry, old: RoutineSet | undefined): RoutineSet {
+  const base: RoutineSet = { id: old?.id ?? uid(), type: s.type, ...plannedLimb(s, old) };
+  if (!isSideSet(s)) return base;
+  const side = (k: Side) => plannedLimb(s.sides[k], old ? sideOf(old, k) : null);
+  return syncSideSet({ ...base, sides: { left: side('left'), right: side('right') } });
 }
 
 /*
@@ -210,15 +228,25 @@ export function workoutForRoutineUpdate(w: Workout, routine: Routine, splits: Va
     // The sets done on the other machine leave this slot's plan for them unchanged (minus the planned weight
     // when the slot itself now holds a different machine: that weight belonged to the old one).
     const sameMachine = we.exerciseId === re.exerciseId;
-    const planned: SetEntry[] = re.sets.slice(we.sets.length).map((rs) => ({
-      id: rs.id,
-      type: rs.type,
-      weightKg: sameMachine ? rs.weightKg ?? null : null,
-      reps: rs.reps ?? null,
-      durationSec: rs.durationSec ?? null,
-      distanceM: rs.distanceM ?? null,
-      done: true,
-    }));
+    const planned: SetEntry[] = re.sets.slice(we.sets.length).map((rs) => {
+      const sides = copySides(rs);
+      return {
+        id: rs.id,
+        type: rs.type,
+        weightKg: sameMachine ? rs.weightKg ?? null : null,
+        reps: rs.reps ?? null,
+        durationSec: rs.durationSec ?? null,
+        distanceM: rs.distanceM ?? null,
+        ...(sides
+          ? {
+              sides: sameMachine
+                ? sides
+                : { left: { ...sides.left, weightKg: null }, right: { ...sides.right, weightKg: null } },
+            }
+          : {}),
+        done: true,
+      };
+    });
     exercises.push({ ...we, sets: [...we.sets, ...planned] });
   }
   return { ...w, exercises };
@@ -289,7 +317,10 @@ export function routineExerciseSwaps(r: Routine, w: Workout, splits?: VariantSpl
 
 const comparable = (list: RoutineExercise[]) =>
   JSON.stringify(
-    list.map((e) => [e.exerciseId, e.sets.map((s) => [s.type, s.weightKg ?? null, s.reps ?? null, s.repsMax ?? null, s.durationSec ?? null, s.distanceM ?? null])]),
+    list.map((e) => [
+      e.exerciseId,
+      e.sets.map((s) => [s.type, s.weightKg ?? null, s.reps ?? null, s.repsMax ?? null, s.durationSec ?? null, s.distanceM ?? null, copySides(s)]),
+    ]),
   );
 
 /** The "anything to update?" step, on a folded workout and its merge result. */

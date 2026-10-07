@@ -15,7 +15,7 @@ import { toast } from '../components/ui/dialogs';
 import { isSideSet } from './calc';
 import { typeFields, type TypeFields } from './exerciseMeta';
 import { uid } from './ids';
-import { SIDES, sideOf, sideTarget, syncSideSet, valuesOf } from './sides';
+import { copySides, SIDES, sideOf, sideTarget, syncSideSet } from './sides';
 import { deleteMedia } from './media';
 import { saveWorkout, defaultWorkoutName, loadTypeLookup } from './workouts';
 
@@ -162,7 +162,8 @@ export function targetFromValues(s: {
     durationSec: s.durationSec ?? null,
     distanceM: s.distanceM ?? null,
     // A per-side set plans each side from its own values next time.
-    ...(isSideSet(s) ? { sides: { left: valuesOf(s.sides.left), right: valuesOf(s.sides.right) } } : {}),
+    // A per-side set or routine set plans each side from its own values (a routine side keeps its rep range).
+    ...(isSideSet(s) ? { sides: copySides(s) } : {}),
   };
 }
 
@@ -304,7 +305,18 @@ const mapEx = (list: WorkoutExercise[], weId: string, fn: (we: WorkoutExercise) 
   list.map((we) => (we.id === weId ? fn(we) : we));
 
 /** A planned weight belongs to one machine; reps, rep ranges, time and distance still apply on another. */
-export const dropWeightTarget = (s: SetEntry): SetEntry => ({ ...s, target: s.target ? { ...s.target, weightKg: null } : null });
+export const dropWeightTarget = (s: SetEntry): SetEntry => ({
+  ...s,
+  target: s.target
+    ? {
+        ...s.target,
+        weightKg: null,
+        ...(s.target.sides
+          ? { sides: { left: { ...s.target.sides.left, weightKg: null }, right: { ...s.target.sides.right, weightKg: null } } }
+          : {}),
+      }
+    : null,
+});
 
 /** Immutable exercise/set operations shared by the live logger (store) and the saved-workout editor. */
 export const exerciseListOps = {

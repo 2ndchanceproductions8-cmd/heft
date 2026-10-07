@@ -153,6 +153,8 @@ export type Side = 'left' | 'right';
 export interface SideValues {
   weightKg?: number | null;
   reps?: number | null;
+  /** Plans only (a routine set's side, and the placeholders it becomes): the top of this side's rep range. */
+  repsMax?: number | null;
   durationSec?: number | null;
   distanceM?: number | null;
 }
@@ -289,6 +291,11 @@ export interface RoutineSet {
   repsMax?: number | null;
   durationSec?: number | null;
   distanceM?: number | null;
+  /**
+   * Planned left and right (per-side exercises): each side its own weight, reps / range, time, distance. The
+   * top-level values mirror the better side, like a logged per-side set. Missing = the plain values plan each side.
+   */
+  sides?: SetSides | null;
 }
 
 export interface RoutineExercise {

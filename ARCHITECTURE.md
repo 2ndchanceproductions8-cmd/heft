@@ -145,7 +145,7 @@ set (one badge, one RPE, one ✓, one rest timer, one set in the counts and the 
   the logger card's "Left / Right: On/Off" button beside the rest timer (live AND editing a saved workout) and the
   first item of its ⋯ menu (both convert this instance's sets: a plain value becomes each side's, joining keeps the
   better side after a confirm when sides differ); the routine editor card's L/R pill + first ⋯ item (saved at once
-  as the exercise's setting; routine sets stay plain and apply to each side); the exercise page's ⋯ menu, Left vs
+  as the exercise's setting; turning it off folds this routine's sets to their better side after a confirm); the exercise page's ⋯ menu, Left vs
   Right card and settings row; and the custom exercise form's **Sides** switch
   (`features/exercises/ExerciseForm.tsx`: a new exercise's switch follows `defaultPerSide(name)` until touched, so
   "Iso-Lateral Row (Hammer Strength)" turns it on; a variant starts from its base; saved as the override only when it
@@ -156,6 +156,17 @@ set (one badge, one RPE, one ✓, one rest timer, one set in the counts and the 
   exercise (from a routine plan, a previous session, "Add Set") are split lazily on the first side edit or on the
   tick, so nothing converts sets up front. The tick fills each side (`filledValues`) and needs both
   ("Enter right reps first"). `targetFromValues` / `setsFromPrevious` carry `target.sides`.
+- **Routines plan each side too** (the owner expected left and right weight AND reps in the routine editor):
+  `RoutineSet.sides` (each side its own weight, reps / `repsMax` range, time, distance; `SideValues.repsMax` exists for
+  plans only), top-level values mirror the better side (`syncSideSet`, generic over logged and planned sets). The
+  routine editor (`RoutineSetRow` `perSide`) and the routine page show an L and an R line per set for a per-side
+  exercise; a plain planned set shows its values on both lines and splits on the first side edit (`patchSide`). "Set
+  rep range for all sets" / "Clear rep ranges" reach both sides. `targetFromValues` / `copySides` carry each side's
+  plan (range included) into `target.sides`, so starting the routine pre-fills each side; `dropWeightTarget` and
+  `routineExerciseFromSource` clear side weights for another machine. "Update routine?" compares side by side
+  (`routines.ts sameSet`: a plain plan or a plain logged set stands for both sides) and `plannedFromLogged` plans
+  each side, keeping that side's range; "Save as routine", Add Set, `fitSetsToFields`, `routineSetsFromPrevious` and
+  `routineSetsSummary` all keep or read both sides.
 - **Display:** `formatSidesLine` → "L 50 lb x 10 · R 50 lb x 9" ("L/R 50 lb x 10" when equal) in every set-line
   formatter; the saved workout's set table shows an L and an R line with their own e1RM; the CSV writes two rows with a
   `Side` column; PR toasts and the Records tab name the side.
