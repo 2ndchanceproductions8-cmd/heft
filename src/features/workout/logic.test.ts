@@ -37,6 +37,7 @@ const ex = (patch: Partial<Exercise> = {}): Exercise => ({
   id: BENCH,
   name: 'Bench',
   originalName: 'Bench',
+  perSide: false,
   equipment: 'barbell',
   primary: 'chest',
   secondary: [],

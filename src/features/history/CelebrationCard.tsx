@@ -3,6 +3,7 @@ import type { DistanceUnit, Unit, Workout } from '../../types';
 import { Button } from '../../components/ui';
 import { useExercises } from '../../lib/ExerciseProvider';
 import { PR_LABEL } from '../../lib/calc';
+import { SIDE_LABEL } from '../../lib/sides';
 import { formatDuration, formatVolume } from '../../lib/units';
 import { formatPRValue, ordinal } from './historyUtils';
 import { SendToHealthButton } from './SendToHealthButton';
@@ -78,7 +79,10 @@ export function CelebrationCard({
                     <Trophy className="h-5 w-5 shrink-0 text-gold" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[15px] font-semibold">{ex.name}</div>
-                      <div className="text-[13px] text-muted">{PR_LABEL[pr.kind]}</div>
+                      <div className="text-[13px] text-muted">
+                        {PR_LABEL[pr.kind]}
+                        {pr.side ? ` · ${SIDE_LABEL[pr.side]}` : ''}
+                      </div>
                     </div>
                     <div className="shrink-0 text-[15px] font-semibold text-gold tabular-nums">
                       {formatPRValue(pr.kind, pr.value, ex.type, unit, distanceUnit)}

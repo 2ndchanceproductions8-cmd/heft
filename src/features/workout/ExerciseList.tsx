@@ -93,7 +93,8 @@ export function WorkoutExerciseList({
       const [first, ...more] = list;
       const extra = more.length ? ` (+${more.length} more)` : '';
       const value = formatPRValue(first.kind, first.value, index.get(first.exerciseId).type, settings);
-      toast(`New PR - ${PR_LABEL[first.kind]}: ${value}${extra}`, 'pr', 3200);
+      const side = first.side ? ` (${first.side})` : '';
+      toast(`New PR - ${PR_LABEL[first.kind]}: ${value}${side}${extra}`, 'pr', 3200);
       navigator.vibrate?.([30, 60, 30]);
     }
   }, [prs, bests, announcePRs, settings, index]);

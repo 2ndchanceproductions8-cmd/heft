@@ -1,5 +1,5 @@
-import type { ExerciseType, PRKind, SetEntry, Workout } from '../../types';
-import { estimate1RM, isRecordSet, prKindsFor, prMetric, type ExerciseSession } from '../../lib/calc';
+import type { ExerciseType, PRKind, SetEntry, Side, Workout } from '../../types';
+import { estimate1RM, isRecordSet, prKindsFor, prMetricSide, type ExerciseSession } from '../../lib/calc';
 
 /*
  * Pure statistics for the exercises feature (no DB / React imports, unit-tested in stats.test.ts).
@@ -109,6 +109,8 @@ export interface RecordEntry {
   /** kg, reps, seconds or meters depending on kind. */
   value: number;
   set: SetEntry;
+  /** The side that set it, when the set was per-side (records count the better side). */
+  side?: Side;
   workoutId: string;
   workoutName: string;
   date: number;
@@ -125,9 +127,9 @@ export function personalRecords(workouts: Workout[], exerciseId: string, type: E
         if (we.exerciseId !== exerciseId) continue;
         for (const s of we.sets) {
           if (!isRecordSet(s)) continue;
-          const v = prMetric(kind, s, type);
+          const { value: v, side } = prMetricSide(kind, s, type);
           if (v > 0 && (!best || v > best.value + 1e-9)) {
-            best = { kind, value: v, set: s, workoutId: w.id, workoutName: w.name, date: w.startedAt };
+            best = { kind, value: v, set: s, ...(side ? { side } : {}), workoutId: w.id, workoutName: w.name, date: w.startedAt };
           }
         }
       }

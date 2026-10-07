@@ -250,13 +250,25 @@ describe('exportCsv', () => {
     };
     const csv = exportCsv([w1, w2], getExercise, 'lb', 'km');
     const lines = csv.trimEnd().split('\r\n');
-    expect(lines[0]).toBe('Date,Workout,Exercise,Set,Type,Weight (lb),Reps,Duration (s),Distance,Distance Unit,RPE');
+    expect(lines[0]).toBe('Date,Workout,Exercise,Set,Type,Weight (lb),Reps,Duration (s),Distance,Distance Unit,RPE,Side');
     expect(lines).toHaveLength(4);
     // oldest first
-    expect(lines[1]).toMatch(/^2026-08-31 09:30,Cardio,Treadmill,1,Normal,,,1500,5,km,$/);
-    expect(lines[2]).toBe('2026-09-01 09:30,"Push, heavy","Chest Press, ""Hammer""",1,Normal,220.46,5,,,,');
-    expect(lines[3]).toBe('2026-09-01 09:30,"Push, heavy","Chest Press, ""Hammer""",2,Warm-up,110.23,12,,,,7');
+    expect(lines[1]).toMatch(/^2026-08-31 09:30,Cardio,Treadmill,1,Normal,,,1500,5,km,,$/);
+    expect(lines[2]).toBe('2026-09-01 09:30,"Push, heavy","Chest Press, ""Hammer""",1,Normal,220.46,5,,,,,');
+    expect(lines[3]).toBe('2026-09-01 09:30,"Push, heavy","Chest Press, ""Hammer""",2,Warm-up,110.23,12,,,,7,');
     expect(csv.endsWith('\r\n')).toBe(true);
+  });
+
+  it('writes a per-side set as a Left and a Right row with the same set number', () => {
+    const w = workout('w', T0, [
+      { ...set('a', 20, 10), sides: { left: { weightKg: 20, reps: 10 }, right: { weightKg: 20, reps: 8 } }, rpe: 8 },
+      set('b', 20, 9),
+    ]);
+    const lines = exportCsv([w], getExercise, 'kg', 'km').trimEnd().split('\r\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[1].split(',').slice(-9)).toEqual(['1', 'Normal', '20', '10', '', '', '', '8', 'Left']);
+    expect(lines[2].split(',').slice(-9)).toEqual(['1', 'Normal', '20', '8', '', '', '', '8', 'Right']);
+    expect(lines[3].split(',').slice(-9)).toEqual(['2', 'Normal', '20', '9', '', '', '', '', '']);
   });
 
   it('exports carries in yards/meters, not rounded-away miles/km', () => {

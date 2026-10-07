@@ -109,6 +109,7 @@ describe('calories', () => {
     id: 'x',
     name: 'x',
     originalName: 'x',
+    perSide: false,
     equipment: 'barbell',
     primary: 'chest',
     secondary: [],

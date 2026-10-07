@@ -5,7 +5,7 @@ import { db } from '../../db';
 import type { CustomExercise, Equipment, Exercise, ExerciseType, Muscle } from '../../types';
 import { EXERCISE_TYPES } from '../../types';
 import { ExerciseThumb } from '../../components/ExerciseImage';
-import { Sheet, Spinner, TextArea, TextField, confirm, cx, toast } from '../../components/ui';
+import { Sheet, Spinner, TextArea, TextField, Toggle, confirm, cx, toast } from '../../components/ui';
 import { useExercises } from '../../lib/ExerciseProvider';
 import {
   EQUIPMENT_FILTERS,
@@ -15,7 +15,8 @@ import {
   MUSCLE_FILTERS,
   MUSCLE_LABEL,
 } from '../../lib/exerciseMeta';
-import { createCustomExercise, updateCustomExercise, variantName } from '../../lib/exercises';
+import { createCustomExercise, setExercisePerSide, updateCustomExercise, variantName } from '../../lib/exercises';
+import { defaultPerSide } from '../../lib/sides';
 import { deleteMedia, saveImageFile, useMediaUrls } from '../../lib/media';
 import { refreshHistoryAfterTypeChange } from './mutations';
 import { VARIANT_EXPLAINER } from './ExerciseActions';
@@ -35,6 +36,8 @@ export interface ExerciseFormValues {
   /** One step per line. */
   instructions: string;
   photoIds: string[];
+  /** Log left and right separately (iso-lateral / single-arm / single-leg). Saved as ExerciseOverride.perSide. */
+  perSide: boolean;
 }
 
 type FieldKey = 'name' | 'equipment' | 'primary';
@@ -68,8 +71,11 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
     brand: '',
     instructions: '',
     photoIds: [],
+    perSide: initialBase ? initialBase.perSide : defaultPerSide(initialName ?? ''),
   }));
   const variantInit = useRef(!!initialBase);
+  // Until the user flips the switch, a new exercise's per-side follows its name ("Iso-Lateral Row" turns it on).
+  const [perSideTouched, setPerSideTouched] = useState(mode !== 'create');
   const [record, setRecord] = useState<CustomExercise | null>(null);
   const [editMissing, setEditMissing] = useState(false);
   const [nameEdited, setNameEdited] = useState(mode !== 'variant');
@@ -86,19 +92,23 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
   const added = useRef<string[]>([]);
   const removed = useRef<string[]>([]);
   const saved = useRef(false);
+  /** Edit mode: the per-side value the form loaded (the override is written only when the user changes it). */
+  const loadedPerSide = useRef<boolean | null>(null);
 
   // ---- load the record being edited (once)
   useEffect(() => {
     if (!editId) return;
     let alive = true;
-    db.customExercises
-      .get(editId)
-      .then((rec) => {
+    Promise.all([db.customExercises.get(editId), db.overrides.get(editId)])
+      .then(([rec, override]) => {
         if (!alive) return;
         if (!rec) {
           setEditMissing(true);
           return;
         }
+        // Its own setting from the database (the exercise list may still be loading); else a variant's base decides.
+        const perSide = override?.perSide ?? (rec.variantOf ? index.byId.get(rec.variantOf)?.perSide ?? false : false);
+        loadedPerSide.current = perSide;
         const loaded: ExerciseFormValues = {
           name: rec.name,
           equipment: rec.equipment,
@@ -108,6 +118,7 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
           brand: rec.brand ?? '',
           instructions: (rec.instructions ?? []).join('\n'),
           photoIds: rec.photoIds ?? [],
+          perSide,
         };
         baseline.current = JSON.stringify(loaded);
         setRecord(rec);
@@ -132,7 +143,14 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
     if (mode !== 'variant' || variantInit.current || !base) return;
     variantInit.current = true;
     setValues((v) => {
-      const next = { ...v, equipment: base.equipment, primary: base.primary, secondary: [...base.secondary], type: base.type };
+      const next = {
+        ...v,
+        equipment: base.equipment,
+        primary: base.primary,
+        secondary: [...base.secondary],
+        type: base.type,
+        perSide: base.perSide,
+      };
       baseline.current = JSON.stringify(next); // idempotent, so safe if React replays the updater
       return next;
     });
@@ -171,7 +189,13 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
 
   const setName = (name: string) => {
     setNameEdited(true);
-    set('name', name);
+    setValues((v) => ({ ...v, name, perSide: perSideTouched ? v.perSide : defaultPerSide(name) }));
+    if ('name' in errors) setErrors((e) => ({ ...e, name: undefined }));
+  };
+
+  const setPerSide = (perSide: boolean) => {
+    setPerSideTouched(true);
+    set('perSide', perSide);
   };
 
   const setBrand = (brand: string) => {
@@ -269,6 +293,7 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
           photoIds: values.photoIds,
           brand: isVariant ? values.brand.trim() || undefined : record.brand,
         });
+        if (values.perSide !== loadedPerSide.current) await setExercisePerSide(record.id, values.perSide);
         saved.current = true;
         if (removed.current.length) await deleteMedia(removed.current);
         removed.current = [];
@@ -286,6 +311,9 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
         variantOf: mode === 'variant' ? base?.id ?? null : null,
         brand: mode === 'variant' ? values.brand.trim() || undefined : undefined,
       });
+      // A new custom exercise logs both sides together unless switched on here; a variant follows its base.
+      const inherited = mode === 'variant' ? base?.perSide ?? false : false;
+      if (values.perSide !== inherited) await setExercisePerSide(id, values.perSide);
       saved.current = true;
       return id;
     } catch {
@@ -310,6 +338,7 @@ export function useExerciseForm({ editId, variantOfId, initialName }: ExerciseFo
     duplicate,
     set,
     setName,
+    setPerSide,
     setBrand,
     setPrimary,
     toggleSecondary,
@@ -570,6 +599,20 @@ export function ExerciseFormFields({ form, inSheet }: { form: ExerciseFormState;
               </button>
             );
           })}
+        </div>
+      </div>
+
+      <div>
+        <SectionLabel>Sides</SectionLabel>
+        <div className={cx('flex items-center gap-3 rounded-2xl px-4 py-3', listBg)}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[16px] font-medium">Log left &amp; right separately</span>
+            <span className="block text-[13px] leading-snug text-muted">
+              Iso-lateral machines, single-arm or single-leg work: each side gets its own weight and reps, so you can
+              compare them
+            </span>
+          </span>
+          <Toggle checked={values.perSide} onChange={form.setPerSide} label="Log left and right separately" />
         </div>
       </div>
 

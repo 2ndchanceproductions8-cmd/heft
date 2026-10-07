@@ -15,6 +15,8 @@ import type {
   Unit,
   Workout,
 } from '../types';
+import { setLimbs } from './calc';
+import { SIDE_LABEL } from './sides';
 import { displayDistanceAny, displayWeight, distanceUnitForType } from './units';
 import { recomputeAllPRs } from './workouts';
 import { recomputeMeal } from './nutrition/math';
@@ -380,7 +382,8 @@ const num = (n: number | null | undefined) => (n == null || Number.isNaN(n) ? ''
 
 /**
  * One row per completed set, oldest workout first. Weights in the user's unit; distances in the unit the app shows
- * for that exercise type (km/mi for runs, m/yd for carries and sleds), with that unit in its own column.
+ * for that exercise type (km/mi for runs, m/yd for carries and sleds), with that unit in its own column. A per-side
+ * set is two rows with the same set number, Side = Left / Right (empty for a plain set).
  */
 export function exportCsv(
   workouts: Workout[],
@@ -389,7 +392,7 @@ export function exportCsv(
   distanceUnit: DistanceUnit,
 ): string {
   const rows: string[][] = [
-    ['Date', 'Workout', 'Exercise', 'Set', 'Type', `Weight (${unit})`, 'Reps', 'Duration (s)', 'Distance', 'Distance Unit', 'RPE'],
+    ['Date', 'Workout', 'Exercise', 'Set', 'Type', `Weight (${unit})`, 'Reps', 'Duration (s)', 'Distance', 'Distance Unit', 'RPE', 'Side'],
   ];
   const sorted = [...workouts].sort((a, b) => a.startedAt - b.startedAt);
   for (const w of sorted) {
@@ -402,19 +405,22 @@ export function exportCsv(
       for (const s of we.sets) {
         if (!s.done) continue;
         n++;
-        rows.push([
-          date,
-          w.name,
-          name,
-          String(n),
-          CSV_SET_TYPE[s.type] ?? s.type,
-          num(displayWeight(s.weightKg, unit)),
-          num(s.reps),
-          num(s.durationSec),
-          num(displayDistanceAny(s.distanceM, du)),
-          s.distanceM == null ? '' : du,
-          num(s.rpe),
-        ]);
+        for (const { side, values: v } of setLimbs(s)) {
+          rows.push([
+            date,
+            w.name,
+            name,
+            String(n),
+            CSV_SET_TYPE[s.type] ?? s.type,
+            num(displayWeight(v.weightKg, unit)),
+            num(v.reps),
+            num(v.durationSec),
+            num(displayDistanceAny(v.distanceM, du)),
+            v.distanceM == null ? '' : du,
+            num(s.rpe),
+            side ? SIDE_LABEL[side] : '',
+          ]);
+        }
       }
     }
   }

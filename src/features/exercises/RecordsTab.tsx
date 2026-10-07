@@ -9,6 +9,7 @@ import { typeFields } from '../../lib/exerciseMeta';
 import { useSettings } from '../../lib/settings';
 import { formatDistanceForType, formatDuration, formatVolume, formatWeight } from '../../lib/units';
 import { formatEstWeight, formatSetValue } from './format';
+import { SIDE_LABEL, sideOf } from '../../lib/sides';
 import { SectionLabel } from './parts';
 import { lifetimeTotals, personalRecords } from './stats';
 
@@ -90,7 +91,13 @@ export function RecordsTab({ exercise, workouts }: { exercise: Exercise; workout
                   {formatRecord(kind, r.value, type, unit, distanceUnit, f.weightSign)}
                 </div>
                 {kind === 'best_1rm' || kind === 'best_set_volume' ? (
-                  <div className="truncate text-[13px] text-muted tabular-nums">{formatSetValue(r.set, type, unit, distanceUnit)}</div>
+                  <div className="truncate text-[13px] text-muted tabular-nums">
+                    {r.side
+                      ? `${SIDE_LABEL[r.side]} · ${formatSetValue(sideOf(r.set, r.side) ?? r.set, type, unit, distanceUnit)}`
+                      : formatSetValue(r.set, type, unit, distanceUnit)}
+                  </div>
+                ) : r.side ? (
+                  <div className="truncate text-[13px] text-muted">{SIDE_LABEL[r.side]} side</div>
                 ) : null}
                 <div className="mt-1 flex items-center gap-0.5 text-[12px] text-faint">
                   <span className="truncate">{format(r.date, 'MMM d, yyyy')}</span>
@@ -125,7 +132,10 @@ export function RecordsTab({ exercise, workouts }: { exercise: Exercise; workout
                     {type === 'weighted_bodyweight' ? '+' : ''}
                     {formatWeight(r.weightKg, unit)}
                   </span>
-                  <span className="block text-[12px] text-faint">{format(r.date, 'MMM d, yyyy')}</span>
+                  <span className="block text-[12px] text-faint">
+                    {format(r.date, 'MMM d, yyyy')}
+                    {r.side ? ` · ${SIDE_LABEL[r.side]}` : ''}
+                  </span>
                 </span>
                 <span className="text-muted">{formatEstWeight(estimate1RM(r.weightKg, r.reps), unit)}</span>
                 <ChevronRight className="h-4 w-4 text-faint" />

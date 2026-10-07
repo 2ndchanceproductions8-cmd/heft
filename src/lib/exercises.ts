@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { EQUIPMENT_LABEL, MUSCLE_LABEL } from './exerciseMeta';
 import { uid } from './ids';
+import { defaultPerSide } from './sides';
 
 export const CATALOG = catalogData as CatalogExercise[];
 export const CATALOG_BY_ID = new Map(CATALOG.map((e) => [e.id, e]));
@@ -44,6 +45,7 @@ function missingExercise(id: string, loading = false): Exercise {
     photoIds: [],
     instructions: [],
     source: 'custom',
+    perSide: false,
     aliases: [],
     missing: true,
   };
@@ -74,6 +76,7 @@ export function buildExerciseIndex(
       source: 'catalog',
       notes: o?.notes,
       restSec: o?.restSec,
+      perSide: o?.perSide ?? defaultPerSide(c.name),
       hidden: o?.hidden,
       aliases: c.aliases ?? [],
       met: c.met,
@@ -111,6 +114,8 @@ export function buildExerciseIndex(
       brand: c.brand,
       notes: o?.notes,
       restSec: o?.restSec,
+      // A machine/brand variant logs like its base (a single-arm row on another machine is still single-arm).
+      perSide: o?.perSide ?? base?.perSide ?? false,
       hidden: o?.hidden || c.archived,
       aliases: base ? [base.name, ...base.aliases] : [],
       met: base?.met,
@@ -418,4 +423,12 @@ export async function setExerciseNote(id: string, notes: string): Promise<void> 
 
 export async function setExerciseHidden(id: string, hidden: boolean): Promise<void> {
   await patchOverride(id, { hidden: hidden || undefined });
+}
+
+/**
+ * Log new sets of an exercise left and right separately (or not). Stored as an override; a value equal to the
+ * exercise's default is stored too, so the choice survives a variant's base changing.
+ */
+export async function setExercisePerSide(id: string, perSide: boolean): Promise<void> {
+  await patchOverride(id, { perSide });
 }

@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom';
 import { Link2, Trophy } from 'lucide-react';
-import type { DistanceUnit, PRKind, SetType, Unit, WorkoutExercise } from '../../types';
+import type { DistanceUnit, PRRecord, SetType, Unit, WorkoutExercise } from '../../types';
 import { cx } from '../../components/ui';
 import { ExerciseThumb } from '../../components/ExerciseImage';
 import { useExercises } from '../../lib/ExerciseProvider';
-import { PR_LABEL } from '../../lib/calc';
+import { PR_LABEL, setLimbs } from '../../lib/calc';
 import { SET_TYPE_LABEL } from '../../lib/exerciseMeta';
-import { doneSets, formatE1RM, formatSetValue, setColumnLabel, setLabels } from './historyUtils';
+import { SIDE_LABEL, SIDE_LETTER } from '../../lib/sides';
+import { doneSets, formatE1RM, formatLimbValue, setColumnLabel, setLabels } from './historyUtils';
 
 const BADGE: Record<SetType, string> = {
   normal: 'bg-surface-2 text-fg',
@@ -25,7 +26,7 @@ export function ExerciseLog({
 }: {
   we: WorkoutExercise;
   supersetLetter?: string;
-  prsBySet: Map<string, PRKind[]>;
+  prsBySet: Map<string, PRRecord[]>;
   unit: Unit;
   distanceUnit: DistanceUnit;
 }) {
@@ -33,7 +34,9 @@ export function ExerciseLog({
   const ex = get(we.exerciseId);
   const sets = doneSets(we);
   const labels = setLabels(sets);
-  const showE1RM = ex.type === 'weight_reps' && sets.some((s) => (s.reps ?? 0) > 1 && (s.weightKg ?? 0) > 0);
+  const showE1RM =
+    ex.type === 'weight_reps' &&
+    sets.some((s) => setLimbs(s).some(({ values: v }) => (v.reps ?? 0) > 1 && (v.weightKg ?? 0) > 0));
   const to = `/exercises/${encodeURIComponent(ex.id)}`;
 
   return (
@@ -77,7 +80,8 @@ export function ExerciseLog({
           <div className="space-y-0.5">
             {sets.map((s, k) => {
               const kinds = prsBySet.get(s.id) ?? [];
-              const e1rm = showE1RM ? formatE1RM(s, ex.type, unit) : null;
+              // A per-side set reads as two lines (L / R), each with its own e1RM.
+              const limbs = setLimbs(s);
               return (
                 <div
                   key={s.id}
@@ -97,25 +101,37 @@ export function ExerciseLog({
                     {labels[k]}
                   </span>
                   <div className="min-w-0">
-                    <div className="text-[15px] font-semibold tabular-nums">
-                      {formatSetValue(s, ex.type, unit, distanceUnit)}
-                      {s.rpe != null ? <span className="ml-1.5 text-[13px] font-medium text-muted">@ RPE {s.rpe}</span> : null}
-                    </div>
+                    {limbs.map(({ side, values }, i) => (
+                      <div key={side ?? 'set'} className="text-[15px] font-semibold tabular-nums">
+                        {side ? <span className="mr-1.5 text-[12px] font-bold text-muted">{SIDE_LETTER[side]}</span> : null}
+                        {formatLimbValue(values, ex.type, unit, distanceUnit)}
+                        {s.rpe != null && i === 0 ? (
+                          <span className="ml-1.5 text-[13px] font-medium text-muted">@ RPE {s.rpe}</span>
+                        ) : null}
+                      </div>
+                    ))}
                     {kinds.length ? (
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {kinds.map((kind) => (
+                        {kinds.map((pr) => (
                           <span
-                            key={kind}
+                            key={pr.kind}
                             className="inline-flex items-center gap-1 rounded-full bg-gold-soft px-2 py-0.5 text-[11px] font-semibold text-gold ring-1 ring-gold/30"
                           >
                             <Trophy className="h-3 w-3" />
-                            {PR_LABEL[kind]}
+                            {PR_LABEL[pr.kind]}
+                            {pr.side ? ` · ${SIDE_LABEL[pr.side]}` : ''}
                           </span>
                         ))}
                       </div>
                     ) : null}
                   </div>
-                  <span className="text-right text-[13px] text-muted tabular-nums">{e1rm ?? ''}</span>
+                  <span className={cx('text-right text-[13px] text-muted tabular-nums', limbs.length > 1 && 'self-start')}>
+                    {limbs.map(({ side, values }) => (
+                      <span key={side ?? 'set'} className="block leading-[22.5px]">
+                        {(showE1RM ? formatE1RM(values, ex.type, unit) : null) ?? '\u00a0'}
+                      </span>
+                    ))}
+                  </span>
                 </div>
               );
             })}

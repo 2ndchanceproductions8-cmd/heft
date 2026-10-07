@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArchiveRestore,
+  ArrowLeftRight,
   Camera,
   Check,
   ChevronRight,
@@ -35,6 +36,7 @@ import {
   Page,
   Segmented,
   Sheet,
+  Toggle,
   TopBar,
   confirm,
   cx,
@@ -55,6 +57,7 @@ import {
   updateCustomExercise,
   variantFamily,
   variantRoot,
+  setExercisePerSide,
 } from '../../lib/exercises';
 import { deleteMedia, saveImageFile } from '../../lib/media';
 import { useSettings } from '../../lib/settings';
@@ -62,6 +65,7 @@ import { restOptionsWith, restSettingLabel } from '../../lib/rest';
 import { useExerciseWorkouts } from '../../lib/workouts';
 import { VARIANT_EXPLAINER, isRenamed, promptCreateVariant, promptRename, resetName, toggleHidden } from './ExerciseActions';
 import { ExerciseChart } from './ExerciseChart';
+import { SideBalanceCard } from './SideBalanceCard';
 import { MAX_PHOTOS } from './ExerciseForm';
 import { HistoryTab } from './HistoryTab';
 import { RecordsTab } from './RecordsTab';
@@ -278,6 +282,15 @@ function ExerciseDetail({ id }: { id: string }) {
     }
   };
 
+  const setPerSide = async (next: boolean) => {
+    try {
+      await setExercisePerSide(ex.id, next);
+      toast(next ? 'New sets log left and right separately' : 'New sets log both sides together', 'success');
+    } catch {
+      toast('Could not save', 'error');
+    }
+  };
+
   const setRest = async (sec: number | undefined) => {
     try {
       await setExerciseRest(ex.id, sec);
@@ -365,6 +378,8 @@ function ExerciseDetail({ id }: { id: string }) {
 
   // ---- tabs
   const loadingHistory = !workouts || !sessions;
+  // Left vs Right: for exercises logged per side, or with per-side sets in their history.
+  const showSides = ex.perSide || !!sessions?.some((x) => x.sides);
   let body: React.ReactNode;
   if (tab === 'summary') {
     const last = sessions?.[sessions.length - 1];
@@ -387,6 +402,7 @@ function ExerciseDetail({ id }: { id: string }) {
             <Pill>{EQUIPMENT_LABEL[ex.equipment]}</Pill>
             <Pill>{EXERCISE_TYPE_LABEL[ex.type]}</Pill>
             {ex.brand ? <Pill tone="accent">{ex.brand}</Pill> : null}
+            {ex.perSide ? <Pill>Left &amp; right</Pill> : null}
             {archived ? <Pill tone="warn">Archived</Pill> : ex.hidden ? <Pill tone="warn">Hidden</Pill> : null}
           </div>
           {last && sessions ? (
@@ -471,6 +487,12 @@ function ExerciseDetail({ id }: { id: string }) {
           <p className="px-4 pb-3.5 text-[12px] leading-snug text-faint">{VARIANT_EXPLAINER}</p>
         </Card>
 
+        {showSides ? (
+          <Card className="p-4">
+            <SideBalanceCard exercise={ex} sessions={sessions} onTogglePerSide={(v) => void setPerSide(v)} />
+          </Card>
+        ) : null}
+
         <Card className="p-4">
           <SectionLabel>Progress</SectionLabel>
           {loadingHistory ? (
@@ -494,6 +516,16 @@ function ExerciseDetail({ id }: { id: string }) {
             <span className="text-[15px] text-muted tabular-nums">{restSettingLabel(ex.restSec, settings.defaultRestSec)}</span>
             <ChevronRight className="h-5 w-5 text-faint" />
           </button>
+          {!showSides ? (
+            <div className="flex w-full items-center gap-3 border-t border-line px-4 py-3">
+              <ArrowLeftRight className="h-5 w-5 text-muted" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[15px]">Log left &amp; right separately</span>
+                <span className="block text-[12px] text-faint">Single-arm / single-leg: compare each side</span>
+              </span>
+              <Toggle checked={ex.perSide} onChange={(v) => void setPerSide(v)} label="Log left and right separately" />
+            </div>
+          ) : null}
           {!ex.notes ? (
             <button type="button" onClick={() => void editNote()} className="flex w-full items-center gap-3 border-t border-line px-4 py-3 text-left active:bg-surface-2">
               <Pin className="h-5 w-5 text-muted" />

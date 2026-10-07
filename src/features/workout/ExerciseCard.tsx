@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ArrowLeftRight,
   ArrowUpDown,
   Check,
   Link2,
@@ -19,7 +20,8 @@ import { ActionSheet, IconButton, confirm, cx, prompt, toast, type SheetAction }
 import { ExerciseThumb } from '../../components/ExerciseImage';
 import { useExercises } from '../../lib/ExerciseProvider';
 import { typeFields } from '../../lib/exerciseMeta';
-import { renameExercise, setExerciseNote, setExerciseRest } from '../../lib/exercises';
+import { renameExercise, setExerciseNote, setExercisePerSide, setExerciseRest } from '../../lib/exercises';
+import { joinSet, sidesDiffer, splitSet } from '../../lib/sides';
 import { distanceUnitForType } from '../../lib/units';
 import { targetFromValues } from '../../lib/workoutStore';
 import { useLogger } from './LoggerContext';
@@ -104,6 +106,40 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
     ops.removeExercise(we.id);
   };
 
+  /**
+   * Log this exercise's sets left and right separately (or together again). Sticky for the exercise; this
+   * instance's sets convert now: a plain set's values become each side's, a per-side set keeps its better side.
+   */
+  const togglePerSide = async () => {
+    const next = !ex.perSide;
+    if (!next && we.sets.some(sidesDiffer)) {
+      const ok = await confirm({
+        title: 'Log both sides together?',
+        message: 'Sets with different left and right values keep their stronger side. Saved workouts keep both sides.',
+        confirmLabel: 'Combine',
+      });
+      if (!ok) return;
+    }
+    try {
+      await setExercisePerSide(ex.id, next);
+    } catch {
+      toast('Could not change the exercise', 'error');
+      return;
+    }
+    for (const s of we.sets) {
+      const ns = next ? splitSet(s, ex.type) : joinSet(s, ex.type);
+      if (ns === s) continue;
+      ops.updateSet(we.id, s.id, {
+        sides: next ? ns.sides : null,
+        weightKg: ns.weightKg ?? null,
+        reps: ns.reps ?? null,
+        durationSec: ns.durationSec ?? null,
+        distanceM: ns.distanceM ?? null,
+      });
+    }
+    toast(next ? 'Logging left and right separately' : 'Logging both sides together', 'success');
+  };
+
   const addSet = () => {
     const last = we.sets[we.sets.length - 1];
     // The new set's placeholders mirror the last set (what was typed, else its plan).
@@ -126,6 +162,12 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
       onClick: () => setVariantOpen(true),
     },
     { label: 'Rename Exercise', icon: <Pencil className="h-5 w-5" />, onClick: () => void rename() },
+    {
+      label: ex.perSide ? 'Log Both Sides Together' : 'Log Left & Right Separately',
+      hint: ex.perSide ? 'One value per set' : 'Single-arm / single-leg: compare each side',
+      icon: <ArrowLeftRight className="h-5 w-5" />,
+      onClick: () => void togglePerSide(),
+    },
     we.supersetId
       ? {
           label: 'Remove From Superset',
@@ -165,11 +207,27 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
           <ExerciseThumb exercise={ex} size={40} />
           <span className="min-w-0 flex-1">
             <span className="line-clamp-2 text-[16px] leading-snug font-semibold text-accent">{ex.name}</span>
-            {color || ex.brand ? (
+            {color || ex.brand || ex.perSide ? (
               <span className="block truncate text-[12px]">
-                {color ? <span className={cx('font-semibold', color.text)}>Superset</span> : null}
-                {color && ex.brand ? <span className="text-muted"> · </span> : null}
-                {ex.brand ? <span className="text-muted">{ex.brand}</span> : null}
+                {[
+                  color ? (
+                    <span key="ss" className={cx('font-semibold', color.text)}>
+                      Superset
+                    </span>
+                  ) : null,
+                  ex.brand ? (
+                    <span key="brand" className="text-muted">
+                      {ex.brand}
+                    </span>
+                  ) : null,
+                  ex.perSide ? (
+                    <span key="side" className="text-muted">
+                      Left &amp; right
+                    </span>
+                  ) : null,
+                ]
+                  .filter(Boolean)
+                  .flatMap((el, i) => (i ? [<span key={`sep${i}`} className="text-muted"> · </span>, el] : [el]))}
               </span>
             ) : null}
           </span>

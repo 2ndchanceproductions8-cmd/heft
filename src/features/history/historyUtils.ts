@@ -8,11 +8,13 @@ import type {
   PRKind,
   SetEntry,
   SetType,
+  SideValues,
   Unit,
   Workout,
   WorkoutExercise,
 } from '../../types';
-import { estimate1RM } from '../../lib/calc';
+import { estimate1RM, isSideSet } from '../../lib/calc';
+import { formatSidesLine } from '../../lib/sides';
 import { setNumberLabels, typeFields } from '../../lib/exerciseMeta';
 import {
   displayDistance,
@@ -231,6 +233,12 @@ export function formatSetDistance(m: number, type: ExerciseType, unit: DistanceU
  * "30 kg | 40 m" (km users).
  */
 export function formatSetValue(set: SetEntry, type: ExerciseType, unit: Unit, distanceUnit: DistanceUnit): string {
+  if (isSideSet(set)) return formatSidesLine(set.sides, (v) => formatLimbValue(v, type, unit, distanceUnit));
+  return formatLimbValue(set, type, unit, distanceUnit);
+}
+
+/** One limb's values as text (a plain set, or one side of a per-side set: "50 lb x 10"). */
+export function formatLimbValue(set: SideValues, type: ExerciseType, unit: Unit, distanceUnit: DistanceUnit): string {
   const f = typeFields(type);
   const kg = set.weightKg;
   const reps = set.reps;
@@ -264,8 +272,8 @@ export function formatSetValue(set: SetEntry, type: ExerciseType, unit: Unit, di
   return parts.length ? parts.join(' | ') : '-';
 }
 
-/** Estimated 1RM in the display unit, rounded ("161 lb"), or null when it doesn't apply. */
-export function formatE1RM(set: SetEntry, type: ExerciseType, unit: Unit): string | null {
+/** Estimated 1RM in the display unit, rounded ("161 lb"), or null when it doesn't apply. Pass one side of a per-side set. */
+export function formatE1RM(set: SideValues, type: ExerciseType, unit: Unit): string | null {
   if (type !== 'weight_reps' || !set.reps || set.reps < 2 || !set.weightKg) return null;
   const v = estimate1RM(set.weightKg, set.reps);
   return v > 0 ? `${formatNumber(kgToUnit(v, unit), 0)} ${unit}` : null;

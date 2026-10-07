@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BookmarkPlus, ChevronLeft, Ellipsis, FileQuestion, Pencil, Repeat, Trash2, Trophy } from 'lucide-react';
-import type { Muscle, PRKind, Workout } from '../../types';
+import type { Muscle, PRRecord, Workout } from '../../types';
 import {
   ActionSheet,
   Button,
@@ -156,8 +156,8 @@ export function WorkoutDetail({
   );
 
   const prsBySet = useMemo(() => {
-    const m = new Map<string, PRKind[]>();
-    for (const pr of w.prs ?? []) m.set(pr.setId, [...(m.get(pr.setId) ?? []), pr.kind]);
+    const m = new Map<string, PRRecord[]>();
+    for (const pr of w.prs ?? []) m.set(pr.setId, [...(m.get(pr.setId) ?? []), pr]);
     return m;
   }, [w.prs]);
   const letters = useMemo(() => supersetLetters(w.exercises), [w.exercises]);

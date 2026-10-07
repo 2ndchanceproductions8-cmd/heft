@@ -50,6 +50,7 @@ function ex(id: string, primary: Muscle, secondary: Muscle[] = [], type: Exercis
     id,
     name: id,
     originalName: id,
+    perSide: false,
     equipment: 'barbell',
     primary,
     secondary,

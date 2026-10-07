@@ -1,6 +1,8 @@
 import { differenceInCalendarDays, formatDistanceStrict } from 'date-fns';
-import type { DistanceUnit, ExerciseType, RoutineSet, SetEntry, SetType, Unit } from '../../types';
+import type { DistanceUnit, ExerciseType, RoutineSet, SetEntry, SetType, SideValues, Unit } from '../../types';
+import { isSideSet } from '../../lib/calc';
 import { setNumberLabels, typeFields } from '../../lib/exerciseMeta';
+import { formatSidesLine } from '../../lib/sides';
 import type { ExerciseUsage } from '../../lib/exercises';
 import { formatClock, formatDistanceForType, formatNumber, formatWeight, kgToUnit } from '../../lib/units';
 
@@ -9,7 +11,7 @@ import { formatClock, formatDistanceForType, formatNumber, formatWeight, kgToUni
  * output strings are in the user's units.
  */
 
-type SetValues = Pick<SetEntry, 'weightKg' | 'reps' | 'durationSec' | 'distanceM'>;
+type SetValues = Pick<SetEntry, 'weightKg' | 'reps' | 'durationSec' | 'distanceM' | 'sides'>;
 
 const has = (n: number | null | undefined): n is number => n != null && !Number.isNaN(n);
 
@@ -18,8 +20,16 @@ export function formatEstWeight(kg: number, unit: Unit): string {
   return `${formatNumber(kgToUnit(kg, unit), 1)} ${unit}`;
 }
 
-/** One set as a compact line: "135 lb × 8", "+20 lb × 8", "12 reps", "1:00", "1.5 mi in 25:00", "60 lb × 40 yd". */
+/**
+ * One set as a compact line: "135 lb × 8", "+20 lb × 8", "12 reps", "1:00", "1.5 mi in 25:00", "60 lb × 40 yd".
+ * A per-side set: "L 50 lb × 10 · R 50 lb × 9" ("L/R 50 lb × 10" when both sides match).
+ */
 export function formatSetValue(set: SetValues, type: ExerciseType, unit: Unit, distanceUnit: DistanceUnit): string {
+  if (isSideSet(set)) return formatSidesLine(set.sides, (v) => formatLimbValue(v, type, unit, distanceUnit));
+  return formatLimbValue(set, type, unit, distanceUnit);
+}
+
+function formatLimbValue(set: SideValues, type: ExerciseType, unit: Unit, distanceUnit: DistanceUnit): string {
   const f = typeFields(type);
   const weight = f.weight && has(set.weightKg) && set.weightKg !== 0 ? `${f.weightSign}${formatWeight(set.weightKg, unit)}` : null;
   const reps = f.reps && has(set.reps) ? set.reps : null;

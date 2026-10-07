@@ -14,9 +14,10 @@ import type {
   Workout,
   WorkoutExercise,
 } from '../../types';
-import { previousInstanceSets } from '../../lib/calc';
+import { isSideSet, previousInstanceSets } from '../../lib/calc';
 import { setNumberLabels, typeFields, type TypeFields } from '../../lib/exerciseMeta';
 import { uid } from '../../lib/ids';
+import { formatSidesLine, hasSideValue } from '../../lib/sides';
 import type { RoutineUpdatePlan } from '../../lib/routines';
 import {
   displayDistanceAny,
@@ -100,8 +101,8 @@ export const REST_BAR_SPACE = 112;
 
 type Values = Pick<SetEntry, 'weightKg' | 'reps' | 'durationSec' | 'distanceM'>;
 
-export function hasAnyValue(s: Values): boolean {
-  return s.weightKg != null || s.reps != null || s.durationSec != null || s.distanceM != null;
+export function hasAnyValue(s: Values & Pick<SetEntry, 'sides'>): boolean {
+  return hasSideValue(s) || (isSideSet(s) && (hasSideValue(s.sides.left) || hasSideValue(s.sides.right)));
 }
 
 /** Undone sets that already have something typed in (they would be lost on finish). */
@@ -116,12 +117,23 @@ export function pendingSetCount(exercises: WorkoutExercise[]): number {
  */
 export function adaptSetsToType(sets: SetEntry[], fields: TypeFields): { setId: string; patch: Partial<SetEntry> }[] {
   const out: { setId: string; patch: Partial<SetEntry> }[] = [];
+  const unused = <T extends Values>(v: T): Partial<Values> => {
+    const p: Partial<Values> = {};
+    if (!fields.weight && v.weightKg != null) p.weightKg = null;
+    if (!fields.reps && v.reps != null) p.reps = null;
+    if (!fields.duration && v.durationSec != null) p.durationSec = null;
+    if (!fields.distance && v.distanceM != null) p.distanceM = null;
+    return p;
+  };
   for (const s of sets) {
-    const patch: Partial<SetEntry> = {};
-    if (!fields.weight && s.weightKg != null) patch.weightKg = null;
-    if (!fields.reps && s.reps != null) patch.reps = null;
-    if (!fields.duration && s.durationSec != null) patch.durationSec = null;
-    if (!fields.distance && s.distanceM != null) patch.distanceM = null;
+    const patch: Partial<SetEntry> = unused(s);
+    if (isSideSet(s)) {
+      const left = unused(s.sides.left);
+      const right = unused(s.sides.right);
+      if (Object.keys(left).length || Object.keys(right).length) {
+        patch.sides = { left: { ...s.sides.left, ...left }, right: { ...s.sides.right, ...right } };
+      }
+    }
     if (s.done && missingValueMessage(fields, { ...s, ...patch })) patch.done = false;
     if (Object.keys(patch).length) out.push({ setId: s.id, patch });
   }
@@ -153,6 +165,20 @@ export function formatSetSummary(
   }
   const parts = [w, d, t].filter(Boolean);
   return parts.length ? parts.join(' | ') : '-';
+}
+
+/**
+ * A whole set in one line: a plain set as formatSetSummary, a per-side set as "L 50 lb x 10 · R 50 lb x 9"
+ * (one value when both sides match: "L/R 50 lb x 10").
+ */
+export function formatSetLine(
+  s: Values & Pick<SetEntry, 'sides'>,
+  type: ExerciseType,
+  unit: Unit,
+  distanceUnit: DistanceUnit,
+): string {
+  if (!isSideSet(s)) return formatSetSummary(s, type, unit, distanceUnit);
+  return formatSidesLine(s.sides, (v) => formatSetSummary(v, type, unit, distanceUnit));
 }
 
 /** Weight (kg) as a short string in the display unit, no unit suffix ("225", "62.5"). */

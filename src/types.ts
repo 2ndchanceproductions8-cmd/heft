@@ -107,6 +107,11 @@ export interface ExerciseOverride {
   notes?: string;
   /** Default rest timer (seconds) for this exercise. 0 = off. Undefined = settings default. */
   restSec?: number;
+  /**
+   * Log left and right separately (single-arm / single-leg work). Undefined = the default: on for catalog
+   * exercises named as one-sided (lib/sides.ts `defaultPerSide`), a variant follows its base, else off.
+   */
+  perSide?: boolean;
 }
 
 /** Resolved, display-ready exercise (catalog/custom + overrides merged). Produced by lib/exercises.ts. */
@@ -128,6 +133,8 @@ export interface Exercise {
   brand?: string;
   notes?: string;
   restSec?: number;
+  /** New sets are logged left and right separately (resolved from ExerciseOverride.perSide). */
+  perSide: boolean;
   hidden?: boolean;
   aliases: string[];
   met?: number;
@@ -139,6 +146,23 @@ export interface Exercise {
 
 export type SetType = 'normal' | 'warmup' | 'failure' | 'drop';
 
+/** A body side of a per-side set (single-arm / single-leg work). The lifter's own left and right. */
+export type Side = 'left' | 'right';
+
+/** One side's values in a per-side set (same units as SetEntry). */
+export interface SideValues {
+  weightKg?: number | null;
+  reps?: number | null;
+  durationSec?: number | null;
+  distanceM?: number | null;
+}
+
+/** Left and right values of a per-side set. */
+export interface SetSides {
+  left: SideValues;
+  right: SideValues;
+}
+
 /** Planned values for a set (from a routine or the previous session). Shown as grey placeholders. */
 export interface SetTarget {
   weightKg?: number | null;
@@ -146,15 +170,24 @@ export interface SetTarget {
   repsMax?: number | null;
   durationSec?: number | null;
   distanceM?: number | null;
+  /** Per-side placeholders (last session's left and right). Missing = the plain values apply to each side. */
+  sides?: SetSides | null;
 }
 
 export interface SetEntry {
   id: string;
   type: SetType;
+  /**
+   * Per-side sets (`sides` present): the top-level weight/reps/time/distance MIRROR the better side (lib/sides.ts
+   * `syncSideSet`), so code that reads a set as one value sees its strongest side. `sides` is the source of truth:
+   * totals (volume, reps) add both sides, records take the better side (lib/calc.ts `setLimbs`).
+   */
   weightKg?: number | null;
   reps?: number | null;
   durationSec?: number | null;
   distanceM?: number | null;
+  /** Left and right values of a single-arm / single-leg set. Missing = a plain (both sides together) set. */
+  sides?: SetSides | null;
   rpe?: number | null;
   /** Ticked off. Saved workouts only contain done sets. */
   done: boolean;
@@ -198,6 +231,8 @@ export interface PRRecord {
   setId: string;
   kind: PRKind;
   value: number; // kg, reps, seconds or meters depending on kind
+  /** Set by a per-side set: the side that set the record. */
+  side?: Side;
 }
 
 export interface Workout {

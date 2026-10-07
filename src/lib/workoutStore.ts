@@ -5,13 +5,17 @@ import type {
   Routine,
   RoutineExercise,
   SetEntry,
+  SetSides,
   SetTarget,
+  SideValues,
   Workout,
   WorkoutExercise,
 } from '../types';
 import { toast } from '../components/ui/dialogs';
+import { isSideSet } from './calc';
 import { typeFields, type TypeFields } from './exerciseMeta';
 import { uid } from './ids';
+import { SIDES, sideOf, sideTarget, syncSideSet, valuesOf } from './sides';
 import { deleteMedia } from './media';
 import { saveWorkout, defaultWorkoutName, loadTypeLookup } from './workouts';
 
@@ -149,6 +153,7 @@ export function targetFromValues(s: {
   repsMax?: number | null;
   durationSec?: number | null;
   distanceM?: number | null;
+  sides?: SetSides | null;
 }): SetTarget {
   return {
     weightKg: s.weightKg ?? null,
@@ -156,6 +161,8 @@ export function targetFromValues(s: {
     repsMax: s.repsMax ?? null,
     durationSec: s.durationSec ?? null,
     distanceM: s.distanceM ?? null,
+    // A per-side set plans each side from its own values next time.
+    ...(isSideSet(s) ? { sides: { left: valuesOf(s.sides.left), right: valuesOf(s.sides.right) } } : {}),
   };
 }
 
@@ -194,18 +201,16 @@ export function cleanupSupersets(exercises: WorkoutExercise[]): WorkoutExercise[
 
 // ------------------------------------------------------------------ set values
 
-export type SetValues = Pick<SetEntry, 'weightKg' | 'reps' | 'durationSec' | 'distanceM'>;
+export type SetValues = Pick<SetEntry, 'weightKg' | 'reps' | 'durationSec' | 'distanceM' | 'sides'>;
 
-/**
- * The values a set gets when it is ticked: what was typed, else the placeholder (target), else the
- * previous session's matching set. Only the fields the exercise type uses are filled.
- */
-export function filledValues(set: SetEntry, prev: SetEntry | null | undefined, fields: TypeFields): SetValues {
-  const t: SetTarget = set.target ?? {};
-  const pick = <K extends keyof SetValues>(k: K, used: boolean): SetValues[K] => {
-    if (set[k] != null) return set[k];
-    if (!used) return set[k] ?? null;
-    return (t[k as keyof SetTarget] as SetValues[K]) ?? prev?.[k] ?? null;
+type LimbValues = Pick<SetEntry, 'weightKg' | 'reps' | 'durationSec' | 'distanceM'>;
+
+/** One limb's tick values: typed, else planned, else last session's - only for the fields the type uses. */
+function fillLimb(v: SideValues, t: SetTarget | null, prev: SideValues | null, fields: TypeFields): LimbValues {
+  const pick = <K extends keyof LimbValues>(k: K, used: boolean): LimbValues[K] => {
+    if (v[k] != null) return v[k];
+    if (!used) return v[k] ?? null;
+    return (t?.[k as keyof SetTarget] as LimbValues[K]) ?? prev?.[k] ?? null;
   };
   return {
     weightKg: pick('weightKg', fields.weight),
@@ -215,15 +220,41 @@ export function filledValues(set: SetEntry, prev: SetEntry | null | undefined, f
   };
 }
 
-/** Error shown when a set can't be completed yet (null = fine). */
-export function missingValueMessage(fields: TypeFields, v: Partial<SetValues>): string | null {
-  if (fields.reps) return v.reps == null ? 'Enter reps first' : null;
-  if (fields.distance && fields.duration) {
-    return v.distanceM == null && v.durationSec == null ? 'Enter distance or time first' : null;
+/**
+ * The values a set gets when it is ticked: what was typed, else the placeholder (target), else the
+ * previous session's matching set. Only the fields the exercise type uses are filled. A per-side set fills each
+ * side from its own plan (or the plain plan, which applies to each side) and returns its `sides` + mirror.
+ */
+export function filledValues(set: SetEntry, prev: SetEntry | null | undefined, fields: TypeFields): SetValues {
+  if (isSideSet(set)) {
+    const fill = (side: 'left' | 'right') => fillLimb(set.sides[side], sideTarget(set.target, side), sideOf(prev, side), fields);
+    const sides = { left: fill('left'), right: fill('right') };
+    const { weightKg, reps, durationSec, distanceM } = syncSideSet({ ...set, sides });
+    return { weightKg, reps, durationSec, distanceM, sides };
   }
-  if (fields.duration) return v.durationSec == null ? 'Enter time first' : null;
-  if (fields.distance) return v.distanceM == null ? 'Enter distance first' : null;
+  return fillLimb(set, set.target ?? null, prev ?? null, fields);
+}
+
+/** The value a limb still needs before it can be completed ('reps', 'time' ...), or null. */
+function limbMissing(fields: TypeFields, v: Partial<LimbValues>): string | null {
+  if (fields.reps) return v.reps == null ? 'reps' : null;
+  if (fields.distance && fields.duration) return v.distanceM == null && v.durationSec == null ? 'distance or time' : null;
+  if (fields.duration) return v.durationSec == null ? 'time' : null;
+  if (fields.distance) return v.distanceM == null ? 'distance' : null;
   return null;
+}
+
+/** Error shown when a set can't be completed yet (null = fine). A per-side set needs both sides. */
+export function missingValueMessage(fields: TypeFields, v: Partial<SetValues>): string | null {
+  if (isSideSet(v)) {
+    for (const side of SIDES) {
+      const m = limbMissing(fields, v.sides[side]);
+      if (m) return `Enter ${side} ${m} first`;
+    }
+    return null;
+  }
+  const m = limbMissing(fields, v);
+  return m ? `Enter ${m} first` : null;
 }
 
 /**
