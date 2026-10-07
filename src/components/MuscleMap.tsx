@@ -1,14 +1,25 @@
-import { Fragment, memo, useMemo, type KeyboardEvent, type SVGProps } from 'react';
+import { memo, useMemo, type KeyboardEvent } from 'react';
 import type { Muscle } from '../types';
 import { MUSCLE_LABEL } from '../lib/exerciseMeta';
-import { BACK, DRAWN_MUSCLES, FIGURE_H, FIGURE_W, FRONT, type Figure, type Region } from '../features/progress/anatomy';
+import { useSettings } from '../lib/settings';
+import {
+  DRAWN_MUSCLES,
+  MAP_FIGURES,
+  figureSex,
+  regionsToOutline,
+  type FigureSex,
+  type MapFigure,
+  type MapRegion,
+} from '../features/progress/anatomy';
 import { cx } from './ui/Button';
 
 /*
- * Front/back anatomical muscle map (inline SVG, scales to its container width).
+ * Front/back anatomical muscle map (inline SVG, scales to its container width). Body artwork: MuscleMap by
+ * Melih Colpan (MIT, see THIRD_PARTY_NOTICES.md); regions and shared lighting: features/progress/anatomy.ts.
  *
  * Heat mode (`values`): each muscle is tinted with the accent color, opacity stepped by value / max.
  * Highlight mode (`highlight`): primary muscles solid accent, secondary muscles lighter.
+ * A region lit by several muscles (glutes + abductors) shows the strongest of them.
  * cardio / other are not drawn; full_body tints every region lightly.
  */
 
@@ -23,15 +34,22 @@ export interface MuscleMapProps {
   onSelect?: (m: Muscle) => void;
   /** Outline this muscle (e.g. the one whose details are expanded). */
   selected?: Muscle | null;
+  /** Body figure; defaults to the user's `sex` setting (female → female figure, else male). */
+  figure?: 'male' | 'female';
 }
 
 /** Opacity steps for the heat map (value / max → one of these). */
 export const HEAT_STEPS = [0.25, 0.43, 0.62, 0.81, 1] as const;
 const SECONDARY_OPACITY = 0.4;
 const FULL_BODY_TINT = 0.18;
-const BODY_OPACITY = 0.7;
-const STROKE = 1.1;
-const MIRROR = `matrix(-1 0 0 1 ${FIGURE_W} 0)`;
+/** Untrained muscles. */
+const MUSCLE_FILL = 'var(--c-surface-3)';
+/** Head, hands, feet, knees, shins: a step quieter than the muscles (opaque, so hair behind a face never shows). */
+const BODY_FILL = 'color-mix(in srgb, var(--c-surface-3) 70%, var(--c-surface))';
+/** Hair: a touch of the text color, so it reads darker on light and lighter on dark, without drawing the eye. */
+const HAIR_FILL = 'color-mix(in srgb, var(--c-surface-3) 90%, var(--c-fg))';
+/** Selection outline width in CSS px (non-scaling, so it reads the same at every map size). */
+const OUTLINE_PX = 1.5;
 
 /** Accent opacity for a heat value (0 when the muscle wasn't trained). */
 export function heatOpacity(value: number | null | undefined, max: number): number {
@@ -66,40 +84,37 @@ function computeOpacities(
   return out;
 }
 
-/** Regions grouped by muscle, preserving draw order (same-muscle regions are adjacent in the figure data). */
-function groupRegions(regions: Region[]): { muscle: Muscle; paths: string[] }[] {
-  const groups: { muscle: Muscle; paths: string[] }[] = [];
-  for (const r of regions) {
-    const last = groups[groups.length - 1];
-    if (last && last.muscle === r.muscle) last.paths.push(r.d);
-    else groups.push({ muscle: r.muscle, paths: [r.d] });
-  }
-  return groups;
+/** A region's accent opacity: the strongest of the muscles that light it. */
+export function regionOpacity(region: MapRegion, opacities: ReadonlyMap<Muscle, number>): number {
+  let o = 0;
+  for (const m of region.lit) o = Math.max(o, opacities.get(m) ?? 0);
+  return o;
 }
 
-const FRONT_GROUPS = groupRegions(FRONT.regions);
-const BACK_GROUPS = groupRegions(BACK.regions);
+const fmtValue = (v: number) => String(Math.round(v * 10) / 10);
 
-function Mirrored({ d, ...rest }: { d: string } & SVGProps<SVGPathElement>) {
-  return (
-    <>
-      <path d={d} {...rest} />
-      <path d={d} transform={MIRROR} {...rest} />
-    </>
-  );
+/** Tooltip: "Glutes · 12", plus any other muscle lighting the region ("Glutes · 12 · Abductors 4"). */
+export function regionTitle(region: MapRegion, values?: Partial<Record<Muscle, number>>): string {
+  const own = values?.[region.muscle];
+  let title = MUSCLE_LABEL[region.muscle] + (own ? ` · ${fmtValue(own)}` : '');
+  for (const m of region.lit) {
+    const v = values?.[m];
+    if (m !== region.muscle && v) title += ` · ${MUSCLE_LABEL[m]} ${fmtValue(v)}`;
+  }
+  return title;
 }
 
 function FigureSvg({
   figure,
-  groups,
+  sex,
   label,
   opacities,
   values,
   selected,
   onSelect,
 }: {
-  figure: Figure;
-  groups: { muscle: Muscle; paths: string[] }[];
+  figure: MapFigure;
+  sex: FigureSex;
   label: string;
   opacities: Map<Muscle, number>;
   values?: Partial<Record<Muscle, number>>;
@@ -107,80 +122,61 @@ function FigureSvg({
   onSelect?: (m: Muscle) => void;
 }) {
   const interactive = !!onSelect;
-  const strokeProps = { stroke: 'var(--c-bg)', strokeWidth: STROKE, strokeLinejoin: 'round' as const };
-  const selectedGroups = selected ? groups.filter((g) => g.muscle === selected) : [];
+  const outlined = regionsToOutline(figure, sex, selected);
 
   return (
     <figure className="m-0 flex min-w-0 flex-1 flex-col items-center">
       <svg
-        viewBox={`0 0 ${FIGURE_W} ${FIGURE_H}`}
+        viewBox={`0 0 ${figure.w} ${figure.h}`}
         className="block h-auto w-full select-none"
         role={interactive ? 'group' : 'img'}
         aria-label={`${label} muscle map`}
       >
-        {/* body silhouette (non-muscle parts: head, hands, joints, feet) */}
-        <g style={{ fill: 'var(--c-surface-3)', fillOpacity: BODY_OPACITY }}>
-          {figure.body.map((d, i) => (
-            <Mirrored key={i} d={d} />
-          ))}
-          {figure.details.map((d, i) => (
-            <Mirrored key={'d' + i} d={d} {...strokeProps} />
-          ))}
-        </g>
-
-        {groups.map((g, gi) => {
-          const o = opacities.get(g.muscle) ?? 0;
-          const v = values?.[g.muscle];
-          const title = MUSCLE_LABEL[g.muscle] + (v ? ` · ${Math.round(v * 10) / 10}` : '');
+        {figure.layers.map((layer, i) => {
+          if (layer.kind !== 'muscle')
+            return <path key={i} d={layer.d} style={{ fill: layer.kind === 'hair' ? HAIR_FILL : BODY_FILL }} />;
+          const r = layer.region;
+          const o = regionOpacity(r, opacities);
           return (
             <g
-              key={g.muscle + gi}
+              key={i}
               role={interactive ? 'button' : undefined}
               tabIndex={interactive ? 0 : undefined}
-              aria-label={interactive ? MUSCLE_LABEL[g.muscle] : undefined}
-              aria-pressed={interactive ? selected === g.muscle : undefined}
+              aria-label={interactive ? MUSCLE_LABEL[r.muscle] : undefined}
+              aria-pressed={interactive ? selected === r.muscle : undefined}
               className={cx(interactive && 'cursor-pointer outline-none active:opacity-75')}
-              onClick={interactive ? () => onSelect!(g.muscle) : undefined}
+              onClick={interactive ? () => onSelect!(r.muscle) : undefined}
               onKeyDown={
                 interactive
                   ? (e: KeyboardEvent) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onSelect!(g.muscle);
+                        onSelect!(r.muscle);
                       }
                     }
                   : undefined
               }
             >
-              <title>{title}</title>
-              {g.paths.map((d, i) => (
-                <Fragment key={i}>
-                  <Mirrored d={d} style={{ fill: 'var(--c-surface-3)' }} {...strokeProps} />
-                  {o > 0 ? (
-                    <Mirrored
-                      d={d}
-                      style={{ fill: 'var(--c-accent)', fillOpacity: o, transition: 'fill-opacity .25s ease' }}
-                      {...strokeProps}
-                    />
-                  ) : null}
-                </Fragment>
-              ))}
+              <title>{regionTitle(r, values)}</title>
+              <path d={r.d} style={{ fill: MUSCLE_FILL }} />
+              {o > 0 ? (
+                <path
+                  d={r.d}
+                  style={{ fill: 'var(--c-accent)', fillOpacity: o, transition: 'fill-opacity .25s ease' }}
+                />
+              ) : null}
             </g>
           );
         })}
 
-        {/* head on top of the neck (nothing is drawn underneath it, so the body tone stays even) */}
-        <g style={{ fill: 'var(--c-surface-3)', fillOpacity: BODY_OPACITY }} {...strokeProps}>
-          {figure.top.map((d, i) => (
-            <path key={i} d={d} />
-          ))}
-        </g>
-
         {/* selection outline */}
-        {selectedGroups.length ? (
-          <g style={{ fill: 'none', stroke: 'var(--c-fg)', strokeWidth: 1.6, strokeLinejoin: 'round' }} pointerEvents="none">
-            {selectedGroups.flatMap((g) => g.paths).map((d, i) => (
-              <Mirrored key={i} d={d} />
+        {outlined.length ? (
+          <g
+            style={{ fill: 'none', stroke: 'var(--c-fg)', strokeWidth: OUTLINE_PX, strokeLinejoin: 'round' }}
+            pointerEvents="none"
+          >
+            {outlined.map((r, i) => (
+              <path key={i} d={r.d} vectorEffect="non-scaling-stroke" />
             ))}
           </g>
         ) : null}
@@ -190,13 +186,15 @@ function FigureSvg({
   );
 }
 
-function MuscleMapImpl({ values, highlight, view = 'both', className, onSelect, selected }: MuscleMapProps) {
+function MuscleMapImpl({ values, highlight, view = 'both', className, onSelect, selected, figure }: MuscleMapProps) {
+  const settings = useSettings();
+  const sex = figureSex(figure ?? settings.sex);
   const opacities = useMemo(() => computeOpacities(values, highlight), [values, highlight]);
-  const shared = { opacities, values: highlight ? undefined : values, selected, onSelect };
+  const shared = { sex, opacities, values: highlight ? undefined : values, selected, onSelect };
   return (
-    <div className={cx('flex w-full items-start justify-center gap-3', className)}>
-      {view !== 'back' ? <FigureSvg figure={FRONT} groups={FRONT_GROUPS} label="Front" {...shared} /> : null}
-      {view !== 'front' ? <FigureSvg figure={BACK} groups={BACK_GROUPS} label="Back" {...shared} /> : null}
+    <div className={cx('flex w-full items-start justify-center gap-3', className)} data-figure={sex}>
+      {view !== 'back' ? <FigureSvg figure={MAP_FIGURES[sex].front} label="Front" {...shared} /> : null}
+      {view !== 'front' ? <FigureSvg figure={MAP_FIGURES[sex].back} label="Back" {...shared} /> : null}
     </div>
   );
 }

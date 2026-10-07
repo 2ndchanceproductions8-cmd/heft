@@ -14,3 +14,5 @@ Install: open the site in Safari (iPhone) or Chrome (Android) and choose **Add t
 Develop: `npm install`, `npm run dev` (port 5180), `npm test`, `npm run build`. See `ARCHITECTURE.md`.
 
 Exercise images and instructions: [free-exercise-db](https://github.com/yuhonas/free-exercise-db) (public domain).
+
+Muscle map body artwork: [MuscleMap](https://github.com/melihcolpan/MuscleMap) by Melih Colpan (MIT, see `THIRD_PARTY_NOTICES.md`).
