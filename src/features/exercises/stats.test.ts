@@ -4,7 +4,7 @@ import { exerciseSessions } from '../../lib/calc';
 import { KG_PER_LB, anyToMeters } from '../../lib/units';
 import { deleteExerciseCopy, formatSetValue, relativeDay, routineSetsSummary, setLabels } from './format';
 import { bestSet, computeUsage, lifetimeTotals, metricsFor, personalRecords } from './stats';
-import { exKey, rtKey, selectCreated } from './selection';
+import { browseRoutineId, exKey, rtKey, selectCreated } from './selection';
 import { formatAxis, formatValue, toDisplay } from './ExerciseChart';
 
 const lb = (n: number) => n * KG_PER_LB;
@@ -235,3 +235,21 @@ describe('delete confirmation copy', () => {
   });
 });
 
+
+describe('browseRoutineId (the Routines tab, one routine at a time)', () => {
+  const ids = ['push', 'pull', 'legs'];
+  it("opens on a routine other than the workout's own (biceps on a triceps day)", () => {
+    expect(browseRoutineId(ids, null, 'push')).toBe('pull');
+    expect(browseRoutineId(ids, null, 'pull')).toBe('push');
+    expect(browseRoutineId(ids, null, null)).toBe('push');
+  });
+  it('the tapped chip wins, even the current routine; a vanished pick falls back', () => {
+    expect(browseRoutineId(ids, 'legs', 'push')).toBe('legs');
+    expect(browseRoutineId(ids, 'push', 'push')).toBe('push');
+    expect(browseRoutineId(ids, 'gone', 'push')).toBe('pull');
+  });
+  it('one routine: shows it even when it is the current one; none: null', () => {
+    expect(browseRoutineId(['push'], null, 'push')).toBe('push');
+    expect(browseRoutineId([], null, 'push')).toBeNull();
+  });
+});

@@ -25,3 +25,17 @@ export function selectCreated(cur: PickerSelection[], id: string, replacesId?: s
   const item: PickerSelection = { key, pick: fromRoutine ? { exerciseId: id, fromRoutine } : { exerciseId: id } };
   return [...rest.slice(0, at), item, ...rest.slice(at + 1).filter((s) => s.pick.exerciseId !== replacesId)];
 }
+
+/**
+ * The routine the picker's Routines tab shows while browsing (no search): the one the user tapped, else the first
+ * routine that isn't the one this workout came from (adding biceps to a triceps day means looking at another
+ * routine), else the first. null when there are none.
+ */
+export function browseRoutineId(
+  routineIds: readonly string[],
+  picked: string | null | undefined,
+  current: string | null | undefined,
+): string | null {
+  if (picked && routineIds.includes(picked)) return picked;
+  return routineIds.find((id) => id !== current) ?? routineIds[0] ?? null;
+}

@@ -226,7 +226,12 @@ export function WorkoutExerciseList({
         {footer}
       </div>
 
-      <ExercisePicker open={pickerOpen} onClose={() => setPickerOpen(false)} onAdd={(p, o) => void onAdd(p, o)} />
+      <ExercisePicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onAdd={(p, o) => void onAdd(p, o)}
+        currentRoutineId={routineId ?? null}
+      />
       <ExercisePicker
         open={!!replaceId}
         onClose={() => setReplaceId(null)}

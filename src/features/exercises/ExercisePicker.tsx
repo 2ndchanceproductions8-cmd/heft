@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ClipboardList, History, Plus, SearchX } from 'lucide-react';
 import type { Equipment, Exercise, Muscle, Routine, RoutineExercise } from '../../types';
 import type { PickedExercise } from '../../lib/workoutStore';
-import { Button, EmptyState, Loading, Segmented, Sheet, cx } from '../../components/ui';
+import { Button, Chip, EmptyState, Loading, Segmented, Sheet, cx } from '../../components/ui';
 import { useExercises } from '../../lib/ExerciseProvider';
 import { searchExercises } from '../../lib/exercises';
 import { useFolders, useRoutines } from '../../lib/routines';
@@ -16,7 +16,8 @@ import { FilterBar, SearchField } from './FilterSheets';
 import { formatSetValue, relativeDay, routineSetsSummary } from './format';
 import { hasFinePointer, scrollParent, useExerciseUsage } from './hooks';
 import { HeaderButton } from './parts';
-import { exKey, rtKey, selectCreated, type PickerSelection } from './selection';
+import { browseRoutineId, exKey, rtKey, selectCreated, type PickerSelection } from './selection';
+import { readPref, writePref } from '../progress/format';
 import { bestSet } from './stats';
 
 export interface ExercisePickerProps {
@@ -32,11 +33,15 @@ export interface ExercisePickerProps {
   hideRoutinesTab?: boolean;
   /** Leave one routine out of the Routines tab (the routine currently being edited). */
   excludeRoutineId?: string | null;
+  /** The routine this workout was started from: the Routines tab opens on a different one. */
+  currentRoutineId?: string | null;
 }
 
 /**
  * The Add-Exercise sheet: search the library, pick from one of your routines (bringing its planned sets),
  * or from recently performed exercises. Multi-select with "Add N exercises" / "Add as Superset".
+ * The Routines tab shows one routine at a time, with a chip per routine to flip between them (a search there
+ * looks through every routine at once). The tab last used for adding is remembered on this device.
  */
 export function ExercisePicker(props: ExercisePickerProps) {
   // Mount only while open: state resets on every open and nothing (workout history...) loads while hidden.
@@ -45,6 +50,9 @@ export function ExercisePicker(props: ExercisePickerProps) {
 }
 
 type Tab = 'all' | 'routines' | 'recent';
+const TABS: readonly Tab[] = ['all', 'routines', 'recent'];
+/** localStorage (heft.<key>): the tab the add picker opens on. */
+const TAB_PREF = 'picker.tab';
 
 type Selection = PickerSelection;
 
@@ -64,7 +72,15 @@ function ListLabel({ children, right }: { children: React.ReactNode; right?: Rea
   );
 }
 
-function PickerSheet({ onClose, onAdd, single, title = 'Add Exercise', hideRoutinesTab, excludeRoutineId }: ExercisePickerProps) {
+function PickerSheet({
+  onClose,
+  onAdd,
+  single,
+  title = 'Add Exercise',
+  hideRoutinesTab,
+  excludeRoutineId,
+  currentRoutineId,
+}: ExercisePickerProps) {
   const index = useExercises();
   const nav = useNavigate();
   const { unit, distanceUnit } = useSettings();
@@ -74,7 +90,18 @@ function PickerSheet({ onClose, onAdd, single, title = 'Add Exercise', hideRouti
 
   const [query, setQuery] = useState('');
   const q = useDeferredValue(query);
-  const [tab, setTab] = useState<Tab>('all');
+  // Replace (single) always starts on All; adding reopens on the tab used last (e.g. Routines).
+  const [tab, setTabState] = useState<Tab>(() => {
+    if (single) return 'all';
+    const t = readPref(TAB_PREF, TABS, 'all');
+    return t === 'routines' && hideRoutinesTab ? 'all' : t;
+  });
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    if (!single) writePref(TAB_PREF, t);
+  };
+  const [pickedRoutineId, setPickedRoutineId] = useState<string | null>(null);
+  const chipsRef = useRef<HTMLDivElement>(null);
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [muscle, setMuscle] = useState<Muscle | null>(null);
   const [selected, setSelected] = useState<Selection[]>([]);
@@ -166,19 +193,38 @@ function PickerSheet({ onClose, onAdd, single, title = 'Add Exercise', hideRouti
     return recent.filter((e) => hit.has(e.id));
   }, [recent, q]);
 
-  const routineSections = useMemo(() => {
+  /** Every routine that has exercises, in the Workout tab's order (folders, then each folder's order). */
+  const routineBook = useMemo(() => {
     if (!routines || !folders) return undefined;
     const folderIdx = new Map(folders.map((f, i) => [f.id, i]));
     const folderName = new Map(folders.map((f) => [f.id, f.name]));
     const rank = (r: Routine) => (r.folderId && folderIdx.has(r.folderId) ? folderIdx.get(r.folderId)! : -1);
     const sorted = routines.filter((r) => r.id !== excludeRoutineId).sort((a, b) => rank(a) - rank(b) || a.order - b.order);
-    const term = norm(q);
     return sorted
-      .map((r) => {
+      .map((r) => ({
+        routine: r,
+        folder: (r.folderId && folderName.get(r.folderId)) || 'My Routines',
         // Skip exercises that no longer exist (deleted custom exercises).
-        const usable = r.exercises.filter((re) => !index.get(re.exerciseId).missing);
+        usable: r.exercises.filter((re) => !index.get(re.exerciseId).missing),
+      }))
+      .filter((b) => b.usable.length);
+  }, [routines, folders, index, excludeRoutineId]);
+
+  const browsing = !q.trim();
+  const shownRoutineId = useMemo(
+    () => (routineBook ? browseRoutineId(routineBook.map((b) => b.routine.id), pickedRoutineId, currentRoutineId) : null),
+    [routineBook, pickedRoutineId, currentRoutineId],
+  );
+
+  /** Browsing: the one routine its chip picked. Searching: the matches from every routine. */
+  const routineSections = useMemo(() => {
+    if (!routineBook) return undefined;
+    const term = norm(q);
+    if (!term) return routineBook.filter((b) => b.routine.id === shownRoutineId).map((b) => ({ ...b, items: b.usable }));
+    return routineBook
+      .map(({ routine: r, folder, usable }) => {
         let items = usable;
-        if (term && !norm(r.name).includes(term)) {
+        if (!norm(r.name).includes(term)) {
           const hits = new Set(
             searchExercises(
               usable.map((re) => index.get(re.exerciseId)),
@@ -188,16 +234,32 @@ function PickerSheet({ onClose, onAdd, single, title = 'Add Exercise', hideRouti
           );
           items = usable.filter((re) => hits.has(re.exerciseId));
         }
-        return { routine: r, folder: (r.folderId && folderName.get(r.folderId)) || 'My Routines', usable, items };
+        return { routine: r, folder, usable, items };
       })
       .filter((s) => s.items.length);
-  }, [routines, folders, q, index, excludeRoutineId]);
+  }, [routineBook, q, index, shownRoutineId]);
+
+  /** Picks per routine, for the count on its chip (picks from several routines are added in one go). */
+  const pickedPerRoutine = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of selected) {
+      const id = s.pick.fromRoutine?.routineId;
+      if (id) m.set(id, (m.get(id) ?? 0) + 1);
+    }
+    return m;
+  }, [selected]);
 
   // Jump back to the top when the list changes underneath the user.
   useEffect(() => {
     const sp = scrollParent(bodyRef.current);
     if (sp) sp.scrollTop = 0;
-  }, [q, equipment, muscle, tab]);
+  }, [q, equipment, muscle, tab, shownRoutineId]);
+
+  // The chip row starts scrolled to the routine it shows (it can be off to the right).
+  useEffect(() => {
+    if (tab !== 'routines') return;
+    chipsRef.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [tab, browsing, routineBook]);
 
   const blurSearch = () => {
     if (document.activeElement === searchRef.current) searchRef.current?.blur();
@@ -321,11 +383,18 @@ function PickerSheet({ onClose, onAdd, single, title = 'Add Exercise', hideRouti
       content = (
         <EmptyState
           icon={<ClipboardList className="h-7 w-7" />}
-          title={routines?.some((r) => r.exercises.length) ? 'No matches' : 'No routines yet'}
+          title={routineBook?.length ? 'No matches' : 'No routines yet'}
           message={
-            routines?.some((r) => r.exercises.length)
+            routineBook?.length
               ? 'No routine exercise matches your search.'
               : 'Create a routine on the Workout tab — its exercises (with their planned sets) show up here so you can pull them into any workout.'
+          }
+          action={
+            routineBook?.length && !browsing ? (
+              <Button variant="ghost" onClick={() => setTab('all')}>
+                Search all exercises
+              </Button>
+            ) : undefined
           }
         />
       );
@@ -418,6 +487,35 @@ function PickerSheet({ onClose, onAdd, single, title = 'Add Exercise', hideRouti
             <Segmented value={tab} onChange={setTab} options={tabs} />
             {tab !== 'routines' ? (
               <FilterBar equipment={equipment} muscle={muscle} onEquipment={setEquipment} onMuscle={setMuscle} />
+            ) : browsing && routineBook && routineBook.length > 1 ? (
+              <div
+                ref={chipsRef}
+                className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4"
+                role="group"
+                aria-label="Routine"
+                data-part="routine-chips"
+              >
+                {routineBook.map(({ routine: r }) => {
+                  const active = r.id === shownRoutineId;
+                  const n = pickedPerRoutine.get(r.id) ?? 0;
+                  return (
+                    <Chip key={r.id} active={active} onClick={() => setPickedRoutineId(r.id)} className="max-w-[70%]">
+                      <span className="min-w-0 truncate">{r.name}</span>
+                      {n ? (
+                        <span
+                          className={cx(
+                            'ml-0.5 min-w-[18px] rounded-full px-1.5 text-center text-[12px] leading-[18px] font-semibold tabular-nums',
+                            active ? 'bg-on-accent text-accent' : 'bg-accent text-on-accent',
+                          )}
+                        >
+                          {n}
+                          <span className="sr-only"> picked</span>
+                        </span>
+                      ) : null}
+                    </Chip>
+                  );
+                })}
+              </div>
             ) : null}
           </div>
           <div onTouchStart={blurSearch} className="pb-6">

@@ -44,3 +44,24 @@ describe('ExercisePicker (SSR smoke)', () => {
     expect(html).not.toContain('>Routines<');
   });
 });
+
+describe('ExercisePicker: the remembered tab', () => {
+  it('reopens on the tab used last for adding; Replace always starts on All', () => {
+    const store = new Map<string, string>([['heft.picker.tab', 'routines']]);
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    });
+    try {
+      // Routines tab: no equipment / muscle filters (routines load from the database, which SSR doesn't wait for).
+      const adding = render();
+      expect(adding).not.toContain('All Equipment');
+      const replacing = render({ single: true, hideRoutinesTab: true, title: 'Replace Exercise' });
+      expect(replacing).toContain('All Equipment');
+      // A remembered Routines tab where there is none (the Replace sheet) falls back to All.
+      expect(render({ hideRoutinesTab: true })).toContain('All Equipment');
+    } finally {
+      vi.stubGlobal('localStorage', undefined);
+    }
+  });
+});
