@@ -61,76 +61,35 @@ export function tdee(b: Body, activity: Activity): number {
   return bmr(b) * ACTIVITY_FACTOR[activity];
 }
 
-/** kcal offset from maintenance for a goal + pace (Maintain · Recomp: see recompAdjustment). */
-export function calorieAdjustment(goal: Goal, pace: Pace): number {
-  if (goal === 'maintain') return 0;
-  if (goal === 'lose') return pace === 'aggressive' ? -750 : -400;
-  return pace === 'aggressive' ? 500 : 250;
-}
-
-// ------------------------------------------------------------------ Maintain · Recomp
-
-/*
- * Body recomposition (build muscle, lose fat): the owner (≈23 % body fat) chose a CYCLING DEFICIT over a flat
- * ±200: training days at maintenance (fuel the session), rest days 400 below it. Over a 4-training-day week that
- * averages ≈ −170 kcal/day, a slow fat loss that still supports muscle gain, with protein at 1 g/lb.
- * Training vs rest is decided OUTSIDE this module (store.ts trainingDayInfo: a logged or running workout, or the
- * user's mark) and passed in as a boolean, so the budget math still never sees a workout or its burn.
+/**
+ * Maintain · Recomp (body recomposition: build muscle and lose fat together): the owner (≈23 % body fat) settled on a
+ * small FLAT deficit, the same every day, training or rest (after trying training days at maintenance / rest days
+ * −400, then asking for −200 on both). Protein goes to 1 g/lb, as when losing.
  */
-export const RECOMP_TRAINING_OFFSET = 0;
-export const RECOMP_REST_OFFSET = -400;
-/** How long hand marks are kept (days). */
-export const RECOMP_MARK_DAYS = 60;
-
-/** Typical training days a week per activity level (the recomp average before there is workout history). */
-export const ACTIVITY_TRAINING_DAYS: Record<Activity, number> = {
-  sedentary: 1,
-  light: 2,
-  moderate: 4,
-  active: 6,
-  very_active: 7,
-};
+export const RECOMP_OFFSET = -200;
 
 /** Recomp drives the calories: Maintain · Recomp. */
 export function isRecomp(p: Pick<NutritionProfile, 'goal' | 'recomp'>): boolean {
   return p.goal === 'maintain' && !!p.recomp;
 }
 
-/** kcal offset from maintenance on a recomp day. */
-export function recompAdjustment(trainingDay: boolean): number {
-  return trainingDay ? RECOMP_TRAINING_OFFSET : RECOMP_REST_OFFSET;
+/** kcal offset from maintenance for a goal + pace (Maintain · Recomp: RECOMP_OFFSET). */
+export function calorieAdjustment(goal: Goal, pace: Pace, recomp = false): number {
+  if (goal === 'maintain') return recomp ? RECOMP_OFFSET : 0;
+  if (goal === 'lose') return pace === 'aggressive' ? -750 : -400;
+  return pace === 'aggressive' ? 500 : 250;
 }
 
-/** Average daily offset of a recomp week with this many training days (clamped to 0–7). */
-export function recompAverageOffset(trainingDaysPerWeek: number): number {
-  const n = Math.min(7, Math.max(0, Number.isFinite(trainingDaysPerWeek) ? trainingDaysPerWeek : 0));
-  return (n * RECOMP_TRAINING_OFFSET + (7 - n) * RECOMP_REST_OFFSET) / 7;
-}
-
-/** The day a recomp target is for: is it a training day, and how many training days a week to average over. */
-export interface RecompDay {
-  trainingDay: boolean;
-  /** Missing = the activity level's typical number (ACTIVITY_TRAINING_DAYS). */
-  trainingDaysPerWeek?: number | null;
-}
-
-/**
- * Targets for a body + nutrition profile. Overrides replace kcal / protein; carbs fill the remainder.
- * Maintain · Recomp cycles the calories by `day` (a rest day when `day` is missing) unless a kcal override is set,
- * which stays fixed every day.
- */
+/** Targets for a body + nutrition profile. Overrides replace kcal / protein; carbs fill the remainder. */
 export function computeTargets(
   p: Pick<NutritionProfile, 'activity' | 'goal' | 'pace' | 'kcalOverride' | 'proteinOverride' | 'recomp'>,
   b: Body,
-  day?: RecompDay,
 ): Targets {
   const bmrV = bmr(b);
   const tdeeV = bmrV * ACTIVITY_FACTOR[p.activity];
   const recomp = isRecomp(p);
-  const trainingDay = !!day?.trainingDay;
-  const computedKcal = Math.round(tdeeV + (recomp ? recompAdjustment(trainingDay) : calorieAdjustment(p.goal, p.pace)));
-  const fixedKcal = !!(p.kcalOverride && p.kcalOverride > 0);
-  const kcal = fixedKcal ? Math.round(p.kcalOverride!) : computedKcal;
+  const computedKcal = Math.round(tdeeV + calorieAdjustment(p.goal, p.pace, recomp));
+  const kcal = p.kcalOverride && p.kcalOverride > 0 ? Math.round(p.kcalOverride) : computedKcal;
   const lb = kgToLb(b.weightKg);
   // Higher protein when cutting or recomping, to keep (and build) lean mass; standard intake otherwise.
   const computedProtein = Math.round(p.goal === 'lose' || recomp ? lb * 1.0 : lb * 0.8);
@@ -149,18 +108,6 @@ export function computeTargets(
     bmr: Math.round(bmrV),
     tdee: Math.round(tdeeV),
     overridden: kcal !== computedKcal || proteinG !== computedProtein,
-    ...(recomp && !fixedKcal ? { recomp: recompTargets(tdeeV, trainingDay, day?.trainingDaysPerWeek ?? ACTIVITY_TRAINING_DAYS[p.activity]) } : {}),
-  };
-}
-
-function recompTargets(tdeeV: number, trainingDay: boolean, trainingDaysPerWeek: number) {
-  const n = Math.min(7, Math.max(0, trainingDaysPerWeek));
-  return {
-    trainingDay,
-    trainingKcal: Math.round(tdeeV + RECOMP_TRAINING_OFFSET),
-    restKcal: Math.round(tdeeV + RECOMP_REST_OFFSET),
-    trainingDaysPerWeek: Math.round(n * 10) / 10,
-    avgKcal: Math.round(tdeeV + recompAverageOffset(n)),
   };
 }
 

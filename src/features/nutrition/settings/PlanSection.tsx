@@ -6,7 +6,7 @@ import {
   calorieAdjustment,
   GOAL_LABEL,
   PACE_LABEL,
-  RECOMP_REST_OFFSET,
+  RECOMP_OFFSET,
 } from '../../../lib/nutrition/targets';
 import type { Activity, Goal, Pace } from '../../../lib/nutrition/types';
 import { saveFailed, saveProfile } from './data';
@@ -46,11 +46,11 @@ type MaintainMode = 'steady' | 'recomp';
 
 /**
  * Goal (lose / maintain / gain) and pace, each pace labelled with its daily kcal offset from maintenance. Maintain has
- * its own choice instead of a pace: plain maintenance, or Recomp (training days at maintenance, rest days below).
+ * its own choice instead of a pace: plain maintenance, or Recomp (RECOMP_OFFSET every day, protein 1 g/lb).
  */
 export function GoalSection({ goal, pace, recomp = false }: { goal: Goal; pace: Pace; recomp?: boolean }) {
-  const offset = calorieAdjustment(goal, pace);
   const isRecomp = goal === 'maintain' && recomp;
+  const offset = calorieAdjustment(goal, pace, isRecomp);
   return (
     <Card className="mx-4 w-auto! space-y-3 p-4">
       <Segmented<Goal>
@@ -68,7 +68,7 @@ export function GoalSection({ goal, pace, recomp = false }: { goal: Goal; pace: 
               label: (
                 <span className="block leading-tight">
                   <span className="block">Maintenance</span>
-                  <span className="block text-[12px] font-medium text-muted">same every day</span>
+                  <span className="block text-[12px] font-medium text-muted tabular-nums">0 kcal/day</span>
                 </span>
               ),
             },
@@ -77,7 +77,7 @@ export function GoalSection({ goal, pace, recomp = false }: { goal: Goal; pace: 
               label: (
                 <span className="block leading-tight">
                   <span className="block">Recomp</span>
-                  <span className="block text-[12px] font-medium text-muted tabular-nums">rest days {signedKcal(RECOMP_REST_OFFSET)}</span>
+                  <span className="block text-[12px] font-medium text-muted tabular-nums">{signedKcal(RECOMP_OFFSET)} kcal/day</span>
                 </span>
               ),
             },
@@ -100,7 +100,7 @@ export function GoalSection({ goal, pace, recomp = false }: { goal: Goal; pace: 
       )}
       <p className="text-[13px] leading-snug text-muted tabular-nums">
         {isRecomp
-          ? `Build muscle and lose fat together. Training days = maintenance, rest days = maintenance ${signedKcal(RECOMP_REST_OFFSET)} kcal, protein 1 g per lb. A day counts as training when you log or start a workout, or tap the day switch on the Diary.`
+          ? `Build muscle and lose fat together: maintenance ${signedKcal(offset)} kcal every day, training or rest, and protein 1 g per lb.`
           : offset === 0
             ? 'Daily target = your maintenance calories.'
             : `Daily target = maintenance ${signedKcal(offset)} kcal.`}

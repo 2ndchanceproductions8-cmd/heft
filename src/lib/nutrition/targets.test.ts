@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ACTIVITY_TRAINING_DAYS,
   bmr,
   bodyFromSettings,
   calorieAdjustment,
@@ -8,7 +7,7 @@ import {
   DEFAULT_NUTRITION,
   isRecomp,
   KG_PER_LB,
-  recompAverageOffset,
+  RECOMP_OFFSET,
   tdee,
 } from './targets';
 import { goalRateKgPerWeek } from '../today';
@@ -84,45 +83,25 @@ describe('bodyFromSettings', () => {
 describe('Maintain · Recomp', () => {
   const RECOMP = { ...DEFAULT_NUTRITION, goal: 'maintain' as const, recomp: true };
 
-  it('training days at maintenance, rest days 400 below, protein 1 g per lb', () => {
-    const train = computeTargets(RECOMP, BODY, { trainingDay: true, trainingDaysPerWeek: 4 });
-    const rest = computeTargets(RECOMP, BODY, { trainingDay: false, trainingDaysPerWeek: 4 });
-    expect(train).toMatchObject({ kcal: 2693, proteinG: 170, tdee: 2693, overridden: false });
-    expect(rest).toMatchObject({ kcal: 2293, proteinG: 170 });
-    // Carbs absorb the difference (protein and fat stay put).
-    expect(train.carbsG - rest.carbsG).toBe(100);
-    expect(train.recomp).toEqual({ trainingDay: true, trainingKcal: 2693, restKcal: 2293, trainingDaysPerWeek: 4, avgKcal: 2521 });
-    expect(rest.recomp?.trainingDay).toBe(false);
-  });
-
-  it('the week average: 4 training days ≈ −171 kcal/day; no day info = a rest day at the activity level\'s typical week', () => {
-    expect(recompAverageOffset(4)).toBeCloseTo(-171.43, 2);
-    expect(recompAverageOffset(7)).toBe(0);
-    expect(recompAverageOffset(12)).toBe(0);
-    expect(recompAverageOffset(-1)).toBe(-400);
+  it('maintenance −200 every day, protein 1 g per lb, carbs take the difference', () => {
     const t = computeTargets(RECOMP, BODY);
-    expect(t.kcal).toBe(2293);
-    expect(t.recomp?.trainingDaysPerWeek).toBe(ACTIVITY_TRAINING_DAYS.moderate);
+    const plain = computeTargets(DEFAULT_NUTRITION, BODY);
+    expect(t).toMatchObject({ kcal: 2493, proteinG: 170, fatG: 59, tdee: 2693, overridden: false });
+    expect(plain).toMatchObject({ kcal: 2693, proteinG: 136 });
+    // 200 fewer kcal and 34 g more protein (136 kcal): carbs drop by (200 + 136) / 4 = 84 g.
+    expect(plain.carbsG - t.carbsG).toBe(84);
+    expect(calorieAdjustment('maintain', 'steady', true)).toBe(RECOMP_OFFSET);
+    expect(RECOMP_OFFSET).toBe(-200);
   });
 
-  it('only with Maintain: recomp is ignored for lose / gain, and absent without it', () => {
+  it('only with Maintain; a hand-set calorie target still wins', () => {
     expect(isRecomp({ goal: 'lose', recomp: true })).toBe(false);
-    expect(computeTargets({ ...RECOMP, goal: 'lose' }, BODY, { trainingDay: true }).kcal).toBe(2293);
-    expect(computeTargets({ ...RECOMP, goal: 'lose' }, BODY).recomp).toBeUndefined();
-    expect(computeTargets(DEFAULT_NUTRITION, BODY, { trainingDay: false }).kcal).toBe(2693);
-    expect(computeTargets(DEFAULT_NUTRITION, BODY).recomp).toBeUndefined();
+    expect(computeTargets({ ...RECOMP, goal: 'lose' }, BODY).kcal).toBe(2293);
+    expect(computeTargets({ ...RECOMP, goal: 'gain' }, BODY).kcal).toBe(2943);
+    expect(computeTargets({ ...RECOMP, kcalOverride: 2600 }, BODY)).toMatchObject({ kcal: 2600, proteinG: 170, overridden: true });
   });
 
-  it('a hand-set calorie target stays fixed every day (no cycling), protein still recomp', () => {
-    const t = computeTargets({ ...RECOMP, kcalOverride: 2500 }, BODY, { trainingDay: false });
-    expect(t.kcal).toBe(2500);
-    expect(t.recomp).toBeUndefined();
-    expect(t.proteinG).toBe(170);
-  });
-
-  it('weekly pace is built from the average, not today', () => {
-    const rest = computeTargets(RECOMP, BODY, { trainingDay: false, trainingDaysPerWeek: 4 });
-    expect(goalRateKgPerWeek(rest)).toBeCloseTo(((2521 - 2693) * 7) / 7700, 6);
-    expect(goalRateKgPerWeek(computeTargets({ ...DEFAULT_NUTRITION, goal: 'lose' }, BODY))).toBeCloseTo((-400 * 7) / 7700, 6);
+  it('the weekly goal pace follows: −200 a day ≈ −0.18 kg a week', () => {
+    expect(goalRateKgPerWeek(computeTargets(RECOMP, BODY))).toBeCloseTo((-200 * 7) / 7700, 6);
   });
 });

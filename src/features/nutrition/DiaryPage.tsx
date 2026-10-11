@@ -12,7 +12,6 @@ import { FoodErrorBoundary } from './diary/FoodErrorBoundary';
 import { MealRow } from './diary/MealRow';
 import { buildQuickAdd, QuickAddSheet, type QuickAddValues } from './diary/QuickAddSheet';
 import { TargetsSummary } from './diary/TargetsSummary';
-import { TrainingDayChip } from './diary/TrainingDayChip';
 import { TrainingLine } from './diary/TrainingLine';
 import { otherDayUnfinished, UnfinishedMeals } from './diary/UnfinishedMeals';
 
@@ -36,8 +35,7 @@ function DiaryScreen() {
   const isToday = day === today;
 
   const meals = useDayMeals(day);
-  // Per day: Maintain · Recomp's target depends on whether that day is a training day.
-  const targets = useTargets(day);
+  const targets = useTargets();
   const burn = useDayBurn(day);
   const unfinished = otherDayUnfinished(useUnfinishedMeals(), day);
 
@@ -173,7 +171,7 @@ export function DiaryContent({
   onSettings,
 }: {
   meals: Meal[] | undefined;
-  targets: Pick<TargetsState, 'targets' | 'missing'> & Partial<Pick<TargetsState, 'day' | 'training'>> | undefined;
+  targets: Pick<TargetsState, 'targets' | 'missing'> | undefined;
   burn: DayBurn | undefined;
   unfinished?: Meal[];
   today?: string;
@@ -191,11 +189,6 @@ export function DiaryContent({
           missing={targets?.missing ?? []}
           loading={meals === undefined || targets === undefined}
           onSetup={onSettings}
-          footer={
-            targets?.targets?.recomp && targets.training && targets.day ? (
-              <TrainingDayChip day={targets.day} training={targets.training} recomp={targets.targets.recomp} />
-            ) : null
-          }
         />
         <TrainingLine burn={burn} hasTarget={!!targets?.targets} onSettings={onSettings} />
       </div>

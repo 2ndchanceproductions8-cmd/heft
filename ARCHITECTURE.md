@@ -372,26 +372,14 @@ aggressive, gain +250 / +500), protein 0.8 g/lb (1.0 when losing), fat 0.35 g/lb
 replace the computed values; missing body fields return `missing` instead of targets (the Diary prompts setup).
 
 ### Maintain · Recomp (body recomposition)
-The owner (≈23 % body fat) wants to build muscle and lose fat together. After weighing a flat ±200 band and
-+200/−200 cycling (≈ maintenance over a week, slow fat loss), they chose a **cycling deficit**: `NutritionProfile.recomp`
-(only with goal `maintain`; Food settings → Goal → Maintain → Maintenance | Recomp) makes **training days =
-maintenance** (`RECOMP_TRAINING_OFFSET` 0) and **rest days = maintenance −400** (`RECOMP_REST_OFFSET`), protein 1 g/lb
-(as when losing), fat unchanged, carbs absorb the difference. A kcal override stays fixed every day (no cycling; the
-targets card says so). `Targets.recomp` = `{trainingDay, trainingKcal, restKcal, trainingDaysPerWeek, avgKcal}`.
-- **Training day** (`store.ts trainingDayInfo(day, profile, now)` → `{training, source}`): the user's mark
-  (`NutritionProfile.trainingDays[day]`, `setTrainingDay(day, true | false | null)`, pruned to 60 days) wins; else a
-  workout started that local day (`source: 'logged'`); else, for today, a workout running (`'running'`); else rest.
-  `targets.ts` never imports workouts (the guard test): store.ts decides and passes `{trainingDay}` into
-  `computeTargets(profile, body, day?)`. Workouts only say THAT you trained; their burn is still display-only.
-- **Weekly average** (`recentTrainingDaysPerWeek`): distinct workout days (± marks) over the last 28 days, or since
-  the first workout when that is newer (≥ 7-day window), else `ACTIVITY_TRAINING_DAYS[activity]`.
-  `avgKcal = TDEE + recompAverageOffset(n)` (4 days ≈ −171/day). `goalRateKgPerWeek` uses `avgKcal`, so Today's pace
-  pill and the week card's goal follow the plan's average, not today's kind of day.
-- **Per day:** `loadTargets(now, day)` / `useTargets(day)` (Diary `?d=`, a meal's day, Today = today). The Diary's
-  budget card and Today's Food card show `TrainingDayChip` (`features/nutrition/diary/TrainingDayChip.tsx`: "Training
-  day · maintenance" / "Rest day · −400 kcal", why, one tap flips the day). The Today week card gives each day its own
-  target (`weekModel` `dayTargetKcal`, same rule incl. marks and a running workout): per-column target marks instead
-  of one line, a bar is "over" only against its own day, and the summary reads "avg target".
+The owner (≈23 % body fat) wants to build muscle and lose fat together. `NutritionProfile.recomp` (only with goal
+`maintain`; Food settings → Goal → Maintain → Maintenance | Recomp) sets the target to **maintenance −200 kcal every
+day** (`RECOMP_OFFSET`, through `calorieAdjustment(goal, pace, recomp)`), protein 1 g/lb (as when losing), fat
+unchanged, carbs fill the rest. A kcal override still wins. The weekly goal pace follows (≈ −0.18 kg / −0.4 lb a
+week). History: first built 2026-10-06 as cycling (training days at maintenance, rest days −400, a Training day /
+Rest day switch, per-day week targets); on 2026-10-10 the owner asked for −200 on training days too, so the cycling
+machinery was removed rather than left dormant. A profile row may still carry the old `trainingDays` marks; nothing
+reads them.
 
 ### Analysis lifecycle (`analyze.ts runAnalysis(mealId)`)
 Capture → Analyze sets `pending` and opens `/nutrition/meal/:id`, which starts the run when a Claude key is saved
@@ -431,8 +419,8 @@ is used instead when the browser has one.
 |---|---|
 | `types.ts` | `Meal`, `MealItem`, `MealInput`, `MealStatus`, `AiCall`, `Food`, `FoodChoice`, `Per100g`, `Totals`, `NutritionProfile`, `Body`, `Targets`, `Confidence`, `NutrientSource`, `LookupStatus`, `Activity`, `Goal`, `Pace` |
 | `math.ts` | pure: `emptyTotals`, `scalePer100g`, `addTotals`, `multiplyTotals`, `clampServes`, `MAX_SERVES`, `itemServing`, `itemNutrients`, `mealTotals`, `recomputeMeal`, `countsTowardDay`, `sumMeals`, `remaining(target, eaten)`, `per100gFromEstimate`, `dayKey`, `dayStart`, `shiftDay`, `atForDay(day, now)`, `kcal`, `macroG` |
-| `targets.ts` | `computeTargets(profile, body, day?)`, `bmr`, `tdee`, `calorieAdjustment`, recomp: `isRecomp`, `recompAdjustment`, `recompAverageOffset`, `RECOMP_TRAINING_OFFSET` / `RECOMP_REST_OFFSET` / `RECOMP_MARK_DAYS`, `ACTIVITY_TRAINING_DAYS`, `bodyFromSettings(settings, kg, now)` (body, or the `missing` fields), `DEFAULT_NUTRITION`, `ACTIVITY_FACTOR` / `ACTIVITY_LABEL` / `ACTIVITY_SUBTITLE`, `GOAL_LABEL`, `PACE_LABEL`, `BODY_FIELD_LABEL`, `KG_PER_LB` |
-| `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)` / `loadAiSpend` / `recordSpend` (the ledger), `useTargets(day?)` / `loadTargets(now, day?)` (`TargetsState.day`, `.training`), recomp: `trainingDayInfo`, `recentTrainingDaysPerWeek`, `setTrainingDay`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
+| `targets.ts` | `computeTargets(profile, body)`, `bmr`, `tdee`, `calorieAdjustment(goal, pace, recomp?)`, `isRecomp`, `RECOMP_OFFSET`, `bodyFromSettings(settings, kg, now)` (body, or the `missing` fields), `DEFAULT_NUTRITION`, `ACTIVITY_FACTOR` / `ACTIVITY_LABEL` / `ACTIVITY_SUBTITLE`, `GOAL_LABEL`, `PACE_LABEL`, `BODY_FIELD_LABEL`, `KG_PER_LB` |
+| `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)` / `loadAiSpend` / `recordSpend` (the ledger), `useTargets` / `loadTargets`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
 | `keys.ts` | `getAnthropicKey` / `setAnthropicKey`, `getFdcKey` / `setFdcKey`, `fdcKeyOrDemo`, `FDC_DEMO_KEY`, `isAnthropicSecret`, `clearNutritionKeys`, `maskKey`, `looksLikeAnthropicKey`, `useNutritionKeys()` |
 | `burn.ts` | display-only: `useDayBurn(day)`, `loadDayBurn`, `sumActiveKcal` |
 | `usda.ts` | `searchFoods(query, {pageSize, signal})` → `{status: ok/rate_limited/failed, foods, demoKey}`, `bestMatch(query, signal)`, ranking (`rankFoods`, `scoreCandidate`, `tokens`), `extractPer100g`, `choiceFromFdc`, `timeoutSignal`, `NUTRIENT`, `FDC_DATA_TYPES`, `resetUsdaDataTypeMemo` (tests) |

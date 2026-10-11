@@ -11,16 +11,13 @@ import {
   recordSpend,
   loadTargets,
   MealBusyError,
-  recentTrainingDaysPerWeek,
-  setTrainingDay,
-  trainingDayInfo,
   updateItem,
   updateMeal,
   updateNutritionProfile,
   upsertFood,
 } from './store';
 import { loadDayBurn } from './burn';
-import { dayKey, dayStart, remaining, sumMeals } from './math';
+import { remaining, sumMeals } from './math';
 import type { FoodChoice, MealItem, Per100g } from './types';
 
 const RICE: Per100g = { kcal: 130, proteinG: 2.7, carbsG: 28, fatG: 0.3, fiberG: 0.4, sugarG: 0.1, sodiumMg: 1 };
@@ -207,89 +204,5 @@ describe('recordSpend', () => {
   it('writes ledger rows without a meal row (meal deleted mid-analysis)', async () => {
     await recordSpend('gone', [{ at: AT, model: 'claude-opus-5-5', inputTokens: 1, outputTokens: 1, costUsd: 0.5, ok: true }]);
     expect((await loadAiSpend(AT - 1)).costUsd).toBeCloseTo(0.5, 10);
-  });
-});
-
-describe('Maintain · Recomp training days', () => {
-  const day = (offset: number) => dayKey(new Date(2026, 9, 3 + offset, 12).getTime());
-  const workoutOn = (d: string, id = 'w_' + d) => {
-    const startedAt = dayStart(d) + 18 * 3_600_000;
-    return db.workouts.put({
-      id,
-      name: 'Pull',
-      startedAt,
-      endedAt: startedAt + 3_600_000,
-      durationSec: 3600,
-      exercises: [],
-      exerciseIds: [],
-      photoIds: [],
-      volumeKg: 0,
-      setCount: 0,
-      prs: [],
-      createdAt: startedAt,
-      updatedAt: startedAt,
-    });
-  };
-  const setupBody = async () => {
-    await db.settings.put({ ...DEFAULT_SETTINGS, sex: 'male', birthYear: 1996, heightCm: 177.8, bodyweightKg: 170 * 0.45359237, bodyweightUpdatedAt: 1 });
-    await updateNutritionProfile({ goal: 'maintain', recomp: true });
-  };
-
-  it('a mark wins, else a workout that day, else a workout running today, else rest', async () => {
-    const today = dayKey(AT);
-    expect(await trainingDayInfo(today, {}, AT)).toEqual({ training: false, source: 'none' });
-    await db.active.put({ id: 'current', workout: { id: 'a', name: 'x', startedAt: AT, exercises: [] } });
-    expect(await trainingDayInfo(today, {}, AT)).toEqual({ training: true, source: 'running' });
-    expect(await trainingDayInfo(day(-1), {}, AT)).toEqual({ training: false, source: 'none' }); // running only counts today
-    await workoutOn(day(-1));
-    expect(await trainingDayInfo(day(-1), {}, AT)).toEqual({ training: true, source: 'logged' });
-    expect(await trainingDayInfo(day(-2), {}, AT)).toEqual({ training: false, source: 'none' });
-    expect(await trainingDayInfo(day(-1), { trainingDays: { [day(-1)]: false } }, AT)).toEqual({ training: false, source: 'marked' });
-  });
-
-  it('training days a week: recent distinct workout days; a new user is not diluted by empty weeks', async () => {
-    expect(await recentTrainingDaysPerWeek({}, AT)).toBeNull();
-    // First workout ever 5 days ago, 4 training days since: a 7-day window → 4 a week, not 4 / 28 × 7 = 1.
-    for (const o of [-5, -4, -2, -1]) await workoutOn(day(o));
-    await workoutOn(day(-2), 'second-same-day');
-    expect(await recentTrainingDaysPerWeek({}, AT)).toBe(4);
-    // History older than the window → the full 28 days: 4 days in 28 = 1 a week.
-    await workoutOn(day(-60), 'old');
-    expect(await recentTrainingDaysPerWeek({}, AT)).toBe(1);
-    // Marks count: a rest mark removes a workout day, a training mark adds one.
-    expect(await recentTrainingDaysPerWeek({ trainingDays: { [day(-4)]: false, [day(-3)]: true } }, AT)).toBe(1);
-    expect(await recentTrainingDaysPerWeek({ trainingDays: { [day(-3)]: true } }, AT)).toBe(1.25);
-  });
-
-  it('setTrainingDay stores, clears and prunes old marks', async () => {
-    await setTrainingDay('2026-07-01', true, AT); // > 60 days old by the next write
-    await setTrainingDay(day(0), true, AT);
-    await setTrainingDay(day(-1), false, AT);
-    let p = await db.nutrition.get('profile');
-    expect(p?.trainingDays).toEqual({ [day(0)]: true, [day(-1)]: false });
-    await setTrainingDay(day(0), null, AT);
-    p = await db.nutrition.get('profile');
-    expect(p?.trainingDays).toEqual({ [day(-1)]: false });
-  });
-
-  it('loadTargets: the day decides the calories; logging a workout turns a rest day into a training day', async () => {
-    await setupBody();
-    const before = await loadTargets(AT);
-    expect(before.training).toEqual({ training: false, source: 'none' });
-    expect(before.targets).toMatchObject({ kcal: 2293, proteinG: 170 });
-    await workoutOn(dayKey(AT));
-    const after = await loadTargets(AT);
-    expect(after.training).toEqual({ training: true, source: 'logged' });
-    expect(after.targets?.kcal).toBe(2693);
-    // Another day (the Diary's ?d=) is judged on its own.
-    expect((await loadTargets(AT, day(-1))).targets?.kcal).toBe(2293);
-    await setTrainingDay(day(-1), true, AT);
-    expect((await loadTargets(AT, day(-1))).targets?.kcal).toBe(2693);
-    // Plain maintenance ignores all of it.
-    await updateNutritionProfile({ recomp: false });
-    const plain = await loadTargets(AT);
-    expect(plain.training).toBeNull();
-    expect(plain.targets?.kcal).toBe(2693);
-    expect(plain.targets?.recomp).toBeUndefined();
   });
 });

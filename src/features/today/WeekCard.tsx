@@ -28,8 +28,6 @@ export function WeekCard({ today, now }: { today: string; now: number }) {
       workouts={workouts}
       measurements={measurements}
       targets={targets.targets}
-      trainingMarks={targets.profile.trainingDays}
-      runningToday={targets.training?.source === 'running'}
       unit={targets.settings.unit}
     />
   );

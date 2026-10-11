@@ -34,11 +34,7 @@ export interface WeekInput {
   /** Every measurement row (the trend and the weekly rate need the history before the window). */
   measurements: readonly Measurement[];
   /** null = no targets (body details missing). */
-  targets: Pick<Targets, 'kcal' | 'proteinG' | 'tdee' | 'recomp'> | null;
-  /** Maintain · Recomp: days the user marked as training (true) / rest (false). */
-  trainingMarks?: Record<string, boolean>;
-  /** Maintain · Recomp: a workout is running now (today counts as training). */
-  runningToday?: boolean;
+  targets: Pick<Targets, 'kcal' | 'proteinG' | 'tdee'> | null;
 }
 
 export interface WeekModel {
@@ -47,12 +43,7 @@ export interface WeekModel {
   days: WeekDay[];
   /** Workouts per day key inside the window, in the order they were started. */
   workoutsByDay: Record<string, Workout[]>;
-  /** The kcal target (Maintain · Recomp: the week's AVERAGE target; each day's own is in `dayTargetKcal`). */
   targetKcal: number | null;
-  /** Each day's own kcal target (recomp: training days at maintenance, rest days below; else = targetKcal). */
-  dayTargetKcal: Record<string, number | null>;
-  /** Maintain · Recomp: per-day targets differ, so the lane marks each day's target instead of one line. */
-  recomp: boolean;
   targetProteinG: number | null;
   /** At least one weigh-in ever (not just this week). */
   everWeighed: boolean;
@@ -103,22 +94,11 @@ export function weekModel(input: WeekInput): WeekModel {
   const goal = targets && Number.isFinite(targets.kcal) && Number.isFinite(targets.tdee) ? goalRateKgPerWeek(targets) : null;
   const j = body.weighIns.findLastIndex((w) => w.day < span[0]);
 
-  // Recomp: a day's target follows its kind (same rule as lib/nutrition/store.ts trainingDayInfo: the user's mark,
-  // else a workout that day, else today with a workout running).
-  const recomp = targets?.recomp ?? null;
-  const dayTargetKcal: Record<string, number | null> = {};
-  for (const d of days) {
-    const training = input.trainingMarks?.[d.day] ?? (d.training.workouts > 0 || (d.day === today && !!input.runningToday));
-    dayTargetKcal[d.day] = validTarget(recomp ? (training ? recomp.trainingKcal : recomp.restKcal) : targets?.kcal);
-  }
-
   return {
     today,
     days,
     workoutsByDay,
-    dayTargetKcal,
-    recomp: !!recomp,
-    targetKcal: validTarget(recomp ? recomp.avgKcal : targets?.kcal),
+    targetKcal: validTarget(targets?.kcal),
     targetProteinG: validTarget(targets?.proteinG),
     everWeighed: body.weighIns.length > 0,
     lastWeighIn: body.latest,
@@ -240,50 +220,34 @@ export interface FoodBar {
   kcal: number;
   /** Bar height in percent of the lane. */
   heightPct: number;
-  /** Share of the bar above the day's target (0 … 1). */
+  /** Share of the bar above the target (0 … 1). */
   overShare: number;
-  /** This day's own target height in percent of the lane (per-day targets only, else null). */
-  targetPct: number | null;
 }
 
 export interface FoodGeometry {
   bars: FoodBar[];
-  /** The one target line's height in percent of the lane; null without a target or with per-day targets. */
+  /** The target's height in percent of the lane; null without a target. */
   targetPct: number | null;
 }
 
-/**
- * The food lane: scaled to the larger of the target(s) and the biggest logged day (bars only without a target).
- * With `dayTargets` (Maintain · Recomp) each day is measured against its own target and gets its own mark.
- */
-export function foodGeometry(
-  days: readonly WeekDay[],
-  targetKcal: number | null,
-  today: string,
-  dayTargets?: Record<string, number | null>,
-): FoodGeometry {
+/** The food lane: scaled to the larger of the target and the biggest logged day (bars only without a target). */
+export function foodGeometry(days: readonly WeekDay[], targetKcal: number | null, today: string): FoodGeometry {
   const target = validTarget(targetKcal);
-  const own = (day: string) => (dayTargets ? validTarget(dayTargets[day]) : target);
   const maxLogged = Math.max(0, ...days.filter((d) => d.intake.logged).map((d) => d.intake.kcal));
-  const maxTarget = Math.max(0, ...days.map((d) => own(d.day) ?? 0));
-  const top = Math.max(maxLogged, maxTarget) * FOOD_HEADROOM || 1;
-  const pct = (kcal: number | null) => (kcal != null ? (kcal / top) * 100 : null);
+  const top = Math.max(maxLogged, target ?? 0) * FOOD_HEADROOM || 1;
   const bars = days.map((d): FoodBar => {
     const kcal = Math.max(0, d.intake.kcal);
-    const t = own(d.day);
-    const targetPct = dayTargets ? pct(t) : null;
-    if (!d.intake.logged) return { day: d.day, kind: 'none', kcal: 0, heightPct: 0, overShare: 0, targetPct };
+    if (!d.intake.logged) return { day: d.day, kind: 'none', kcal: 0, heightPct: 0, overShare: 0 };
     return {
       day: d.day,
       kind: d.day === today ? 'today' : 'logged',
       kcal,
       // A logged 0 kcal day (black coffee) still shows a sliver, so it never reads as "not logged".
       heightPct: Math.max(2.5, Math.min(100, (kcal / top) * 100)),
-      overShare: t != null && kcal > t ? (kcal - t) / kcal : 0,
-      targetPct,
+      overShare: target != null && kcal > target ? (kcal - target) / kcal : 0,
     };
   });
-  return { bars, targetPct: dayTargets ? null : pct(target) };
+  return { bars, targetPct: target != null ? (target / top) * 100 : null };
 }
 
 // ------------------------------------------------------------------ text

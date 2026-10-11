@@ -4,8 +4,8 @@ import { uid } from '../ids';
 import { deleteMedia } from '../media';
 import { getSettings, newestWeighIn, pickBodyweightKg } from '../settings';
 import type { Settings } from '../../types';
-import { dayKey, dayStart, emptyTotals, recomputeMeal, shiftDay, sumMeals } from './math';
-import { bodyFromSettings, computeTargets, DEFAULT_NUTRITION, isRecomp, RECOMP_MARK_DAYS, type BodyField } from './targets';
+import { dayKey, emptyTotals, recomputeMeal, sumMeals } from './math';
+import { bodyFromSettings, computeTargets, DEFAULT_NUTRITION, type BodyField } from './targets';
 import type { AiCall, AiSpendRow, Food, FoodChoice, Meal, MealItem, MealStatus, NutritionProfile, Targets, Totals } from './types';
 
 /*
@@ -193,82 +193,6 @@ export async function updateNutritionProfile(patch: Partial<Omit<NutritionProfil
   });
 }
 
-// ------------------------------------------------------------------ recomp training days
-
-/** Why a day counts as training or rest: the user's mark, a workout logged that day, one running now, or nothing. */
-export type TrainingDaySource = 'marked' | 'logged' | 'running' | 'none';
-
-export interface TrainingDayInfo {
-  training: boolean;
-  source: TrainingDaySource;
-}
-
-/**
- * Is `day` a recomp training day? The user's mark wins; else a workout started that local day; else, for today, a
- * workout running right now. Reads workouts only to know THAT you trained, never their calories (display-only burn).
- */
-export async function trainingDayInfo(
-  day: string,
-  profile: Pick<NutritionProfile, 'trainingDays'>,
-  now = Date.now(),
-): Promise<TrainingDayInfo> {
-  const mark = profile.trainingDays?.[day];
-  if (mark != null) return { training: mark, source: 'marked' };
-  const start = dayStart(day);
-  if (Number.isFinite(start)) {
-    const end = dayStart(shiftDay(day, 1));
-    if ((await db.workouts.where('startedAt').between(start, end, true, false).count()) > 0) return { training: true, source: 'logged' };
-  }
-  if (day === dayKey(now) && (await db.active.get('current'))) return { training: true, source: 'running' };
-  return { training: false, source: 'none' };
-}
-
-/** The window recomp's weekly average looks back over (days). */
-export const RECOMP_HISTORY_DAYS = 28;
-
-/**
- * Training days a week lately: distinct local days with a workout (or marked as training, minus days marked as rest)
- * over the last 28 days, or since the first workout ever when that is more recent (at least a 7-day window).
- * null without any workout or mark (the targets then use the activity level's typical number).
- */
-export async function recentTrainingDaysPerWeek(profile: Pick<NutritionProfile, 'trainingDays'>, now = Date.now()): Promise<number | null> {
-  const today = dayKey(now);
-  const from = dayStart(shiftDay(today, -(RECOMP_HISTORY_DAYS - 1)));
-  const [recent, first] = await Promise.all([
-    db.workouts.where('startedAt').aboveOrEqual(from).toArray(),
-    db.workouts.orderBy('startedAt').first(),
-  ]);
-  const days = new Set(recent.filter((w) => w.startedAt < now).map((w) => dayKey(w.startedAt)));
-  const firstDay = first ? dayKey(first.startedAt) : null;
-  for (const [d, training] of Object.entries(profile.trainingDays ?? {})) {
-    if (d < dayKey(from) || d > today) continue;
-    if (training) days.add(d);
-    else days.delete(d);
-  }
-  if (!days.size) return null;
-  // A newer user's window starts at their first workout (or mark), so 5 sessions in 6 days isn't read as 1.25 a week.
-  const windowStart = dayKey(from);
-  const firstEver = [firstDay, ...days].filter((d): d is string => !!d).sort()[0];
-  const startDay = firstEver > windowStart ? firstEver : windowStart;
-  const span = Math.min(RECOMP_HISTORY_DAYS, Math.max(7, Math.round((dayStart(today) - dayStart(startDay)) / 86_400_000) + 1));
-  return Math.min(7, (days.size / span) * 7);
-}
-
-/** Mark a day as training (true) or rest (false), or clear the mark (null) so the automatic rule decides again. */
-export async function setTrainingDay(day: string, training: boolean | null, now = Date.now()): Promise<void> {
-  await db.transaction('rw', db.nutrition, async () => {
-    const cur = await getNutritionProfile();
-    const oldest = shiftDay(dayKey(now), -RECOMP_MARK_DAYS);
-    const marks: Record<string, boolean> = {};
-    for (const [d, v] of Object.entries(cur.trainingDays ?? {})) if (d >= oldest) marks[d] = v;
-    if (training == null) delete marks[day];
-    else marks[day] = training;
-    await db.nutrition.put({ ...cur, trainingDays: marks, id: 'profile' });
-  });
-}
-
-// ------------------------------------------------------------------ targets
-
 export interface TargetsState {
   /** null when body data is missing (see `missing`). */
   targets: Targets | null;
@@ -276,43 +200,25 @@ export interface TargetsState {
   profile: NutritionProfile;
   settings: Settings;
   bodyweightKg: number | null;
-  /** The local day the targets are for. */
-  day: string;
-  /** Maintain · Recomp: whether `day` is a training day and why (null otherwise). */
-  training: TrainingDayInfo | null;
 }
 
-/**
- * Load everything the targets need in one read. Pure function of the DB + `now`. `day` (default today) only matters
- * for Maintain · Recomp, whose calories depend on whether that day is a training day.
- */
-export async function loadTargets(now = Date.now(), day = dayKey(now)): Promise<TargetsState> {
+/** Load everything the targets need in one read. Pure function of the DB + `now`. */
+export async function loadTargets(now = Date.now()): Promise<TargetsState> {
   const [settings, latest, profile] = await Promise.all([getSettings(), newestWeighIn(), getNutritionProfile()]);
   const bodyweightKg = pickBodyweightKg(settings, latest);
   const b = bodyFromSettings(settings, bodyweightKg, now);
-  const recomp = isRecomp(profile);
-  const [training, perWeek] = recomp
-    ? await Promise.all([trainingDayInfo(day, profile, now), recentTrainingDaysPerWeek(profile, now)])
-    : [null, null];
   return {
-    targets: b.body
-      ? computeTargets(profile, b.body, training ? { trainingDay: training.training, trainingDaysPerWeek: perWeek } : undefined)
-      : null,
+    targets: b.body ? computeTargets(profile, b.body) : null,
     missing: b.missing,
     profile,
     settings,
     bodyweightKg,
-    day,
-    training,
   };
 }
 
-/**
- * Live targets for `day` (default today): recompute when settings, a weigh-in, the profile or (recomp) that day's
- * workouts change. undefined while loading.
- */
-export function useTargets(day?: string): TargetsState | undefined {
-  return useLiveQuery(() => loadTargets(Date.now(), day), [day]);
+/** Live targets (recompute when settings, a weigh-in or the profile change). undefined while loading. */
+export function useTargets(): TargetsState | undefined {
+  return useLiveQuery(() => loadTargets(), []);
 }
 
 // ------------------------------------------------------------------ food library (recents + barcode cache)

@@ -34,19 +34,16 @@ export interface FuelCardViewProps {
   targets: Pick<TargetsState, 'targets' | 'missing'> | undefined;
   /** Ids of today's 'analyzing' meals whose run died with the app: shown as needing a retry. */
   interrupted?: ReadonlySet<string>;
-  /** Maintain · Recomp: the training / rest day switch, shown under the budget. */
-  dayChip?: ReactNode;
 }
 
 /** Presentational card (plain props, no IndexedDB), so every state renders in tests. */
-export function FuelCardView({ meals, targets, interrupted, dayChip }: FuelCardViewProps) {
+export function FuelCardView({ meals, targets, interrupted }: FuelCardViewProps) {
   const navigate = useNavigate();
   const ready = meals !== undefined && targets !== undefined;
   return (
     <Card className="p-4">
       <Header count={meals?.length ?? 0} />
       {ready ? <Body meals={meals} targets={targets.targets} missing={targets.missing} interrupted={interrupted} /> : <Skeleton />}
-      {ready && targets.targets && dayChip ? <div className="mt-3">{dayChip}</div> : null}
       <div className="mt-4 grid grid-cols-2 gap-2">
         <Button variant="soft" className="min-w-0" icon={<Camera className="h-[18px] w-[18px] shrink-0" />} onClick={() => navigate(LOG)}>
           <span className="truncate">Snap a meal</span>

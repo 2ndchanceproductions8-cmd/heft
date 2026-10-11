@@ -20,7 +20,7 @@ import { joinFields, TargetsSummary } from './diary/TargetsSummary';
 import { TrainingLine } from './diary/TrainingLine';
 import { bodyweightSource } from './settings/data';
 import { BodySection } from './settings/BodySection';
-import { signedKcal } from './settings/PlanSection';
+import { GoalSection, signedKcal } from './settings/PlanSection';
 import { GITHUB_KEY_IN_USDA, spendLine, UsdaKeySection, usdaKeyProblem } from './settings/KeysSection';
 import { TargetsCard } from './settings/TargetsCard';
 import { DEFAULT_SETTINGS } from '../../lib/settings';
@@ -418,43 +418,17 @@ describe('Food settings renders', () => {
   });
 });
 
-describe('Maintain · Recomp on the Diary and Food settings', () => {
-  const BODY = { sex: 'male' as const, age: 30, heightCm: 177.8, weightKg: 170 * 0.45359237 };
-  const PROFILE = { activity: 'moderate' as const, goal: 'maintain' as const, pace: 'steady' as const, kcalOverride: null, proteinOverride: null, recomp: true };
-  const rest = computeTargets(PROFILE, BODY, { trainingDay: false, trainingDaysPerWeek: 4 });
-  const train = computeTargets(PROFILE, BODY, { trainingDay: true, trainingDaysPerWeek: 4 });
-
-  it('the Diary shows the kind of day under the budget, and why', () => {
-    const out = content({ targets: { targets: rest, missing: [], day: '2026-10-03', training: { training: false, source: 'none' } } });
-    expect(out).toContain('Rest day · −400 kcal');
-    expect(out).toContain('Recomp · no workout yet');
-    expect(out).toContain('2,293'); // the rest-day target in the ring line
-    expect(out).toContain('aria-pressed="false"');
-    const t = content({ targets: { targets: train, missing: [], day: '2026-10-03', training: { training: true, source: 'logged' } } });
-    expect(t).toContain('Training day · maintenance');
-    expect(t).toContain('Recomp · workout logged');
-    expect(t).toContain('2,693');
-  });
-
-  it('no switch without recomp', () => {
-    const out = content({ targets: { targets: computeTargets({ ...PROFILE, recomp: false }, BODY), missing: [], day: '2026-10-03', training: null } });
-    expect(out).not.toContain('Rest day');
-    expect(out).not.toContain('Training day');
-  });
-
-  it('Food settings: training, rest and the week average', () => {
-    const out = render(h(TargetsCard, { targets: train, auto: train, missing: [], profile: { kcalOverride: null, proteinOverride: null } }));
-    expect(out).toContain('kcal today (training day)');
-    expect(out).toMatch(/Training day2,693/);
-    expect(out).toMatch(/Rest day2,293/);
-    expect(out).toMatch(/Week average2,521/);
-    expect(out).toContain('Average at 4 training days a week ≈ −172 kcal a day');
-  });
-
-  it('Food settings: a custom calorie target turns the cycling off, and says so', () => {
-    const fixed = computeTargets({ ...PROFILE, kcalOverride: 2500 }, BODY, { trainingDay: false });
-    const out = render(h(TargetsCard, { targets: fixed, auto: rest, missing: [], profile: { kcalOverride: 2500, proteinOverride: null } }));
-    expect(out).toContain('your custom calorie target stays the same every day');
-    expect(out).not.toContain('Week average');
+describe('Goal: Maintain · Recomp', () => {
+  it('Maintain offers Maintenance or Recomp (−200 kcal/day, every day)', () => {
+    const plain = render(h(GoalSection, { goal: 'maintain', pace: 'steady' }));
+    expect(plain).toContain('Maintenance');
+    expect(plain).toContain('Recomp');
+    expect(plain).toContain('−200 kcal/day');
+    expect(plain).toContain('Daily target = your maintenance calories.');
+    const recomp = render(h(GoalSection, { goal: 'maintain', pace: 'steady', recomp: true }));
+    expect(recomp).toContain('maintenance −200 kcal every day, training or rest, and protein 1 g per lb');
+    const lose = render(h(GoalSection, { goal: 'lose', pace: 'steady', recomp: true }));
+    expect(lose).not.toContain('Recomp');
+    expect(lose).toContain('Daily target = maintenance −400 kcal.');
   });
 });

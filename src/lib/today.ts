@@ -174,13 +174,11 @@ export function weeklyRateKg(points: readonly WeighIn[], today: string, windowDa
 
 /**
  * The weekly weight change the calorie target is built for: (target − TDEE) × 7 / 7,700 kg. Negative = losing.
- * Follows a hand-set kcal override too, because it reads the final target. Maintain · Recomp uses the week's
- * AVERAGE target (training days at maintenance, rest days below), not whichever kind of day today is.
+ * Follows a hand-set kcal override too, because it reads the final target.
  */
-export function goalRateKgPerWeek(t: Pick<Targets, 'kcal' | 'tdee' | 'recomp'>): number {
-  const kcal = t.recomp?.avgKcal ?? t.kcal;
-  if (!Number.isFinite(kcal) || !Number.isFinite(t.tdee)) return 0;
-  return ((kcal - t.tdee) * 7) / KCAL_PER_KG;
+export function goalRateKgPerWeek(t: Pick<Targets, 'kcal' | 'tdee'>): number {
+  if (!Number.isFinite(t.kcal) || !Number.isFinite(t.tdee)) return 0;
+  return ((t.kcal - t.tdee) * 7) / KCAL_PER_KG;
 }
 
 export interface BodySummary {

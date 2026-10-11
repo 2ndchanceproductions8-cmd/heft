@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { Target } from 'lucide-react';
 import { Button, Card, Spinner, cx } from '../../../components/ui';
 import { remaining } from '../../../lib/nutrition/math';
@@ -24,7 +23,6 @@ export function TargetsSummary({
   missing,
   loading,
   onSetup,
-  footer,
 }: {
   totals: Totals | undefined;
   targets: Targets | null;
@@ -32,8 +30,6 @@ export function TargetsSummary({
   /** Totals or targets still loading. */
   loading: boolean;
   onSetup: () => void;
-  /** Under the budget (Maintain · Recomp: the training / rest day switch). */
-  footer?: ReactNode;
 }) {
   if (loading || !totals) {
     return (
@@ -90,7 +86,6 @@ export function TargetsSummary({
         </div>
         <Macros totals={totals} targets={targets} />
       </div>
-      {footer ? <div className="mt-3">{footer}</div> : null}
     </Card>
   );
 }

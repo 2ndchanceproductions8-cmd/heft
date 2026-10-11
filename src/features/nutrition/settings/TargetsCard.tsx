@@ -3,8 +3,6 @@ import { Card, ListGroup, Stat } from '../../../components/ui';
 import type { BodyField } from '../../../lib/nutrition/targets';
 import type { NutritionProfile, Targets } from '../../../lib/nutrition/types';
 import { formatKcal } from '../ui';
-import { formatNumber } from '../../../lib/units';
-import { signedKcal } from './PlanSection';
 import { joinFields } from '../diary/TargetsSummary';
 import { saveFailed, saveProfile } from './data';
 import { InlineNumber } from './InlineNumber';
@@ -42,29 +40,7 @@ export function TargetsCard({
           <Stat label="Maintenance" value={formatKcal(targets.tdee)} />
           <Stat label="Daily target" value={<span className="text-accent">{formatKcal(targets.kcal)}</span>} />
         </div>
-        <div className="mt-1 text-[12px] text-faint">
-          {targets.recomp ? `kcal today (${targets.recomp.trainingDay ? 'training day' : 'rest day'})` : 'kcal per day'}
-        </div>
-        {targets.recomp ? (
-          <div className="mt-3 grid grid-cols-3 gap-3 border-t border-line pt-3">
-            <Stat label="Training day" value={formatKcal(targets.recomp.trainingKcal)} />
-            <Stat label="Rest day" value={formatKcal(targets.recomp.restKcal)} />
-            <Stat label="Week average" value={formatKcal(targets.recomp.avgKcal)} />
-          </div>
-        ) : null}
-        {auto.recomp && !targets.recomp ? (
-          <p className="mt-1.5 text-[12px] leading-snug text-warn">
-            Recomp is on, but your custom calorie target stays the same every day. Use automatic below to cycle training
-            and rest days.
-          </p>
-        ) : null}
-        {targets.recomp ? (
-          <p className="mt-1.5 text-[12px] leading-snug text-faint tabular-nums">
-            Average at {formatNumber(targets.recomp.trainingDaysPerWeek, 1)} training{' '}
-            {targets.recomp.trainingDaysPerWeek === 1 ? 'day' : 'days'} a week ≈{' '}
-            {signedKcal(targets.recomp.avgKcal - targets.tdee)} kcal a day. Carbs go up on training days.
-          </p>
-        ) : null}
+        <div className="mt-1 text-[12px] text-faint">kcal per day</div>
         <div className="mt-3 grid grid-cols-4 gap-2 border-t border-line pt-3">
           <Stat label="Protein" value={`${targets.proteinG} g`} />
           <Stat label="Carbs" value={`${targets.carbsG} g`} />
