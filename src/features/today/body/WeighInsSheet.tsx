@@ -3,21 +3,19 @@ import { Link } from 'react-router-dom';
 import { Check, ChevronRight, Heart, Paperclip, Trash2 } from 'lucide-react';
 import type { Unit } from '../../../types';
 import { IconButton, Sheet, confirm, cx, toast } from '../../../components/ui';
-import { deleteMeasurement } from '../../../lib/healthImport';
+import { deleteMeasurement } from '../../../lib/measurements';
 import { fixed1, readingText, readingWhen, weightText } from './format';
 import { alsoDeleted, deleteWeighInConfirm, showsCountsMarker, WEIGH_IN_LIST_DAYS, type WeighInItem } from './weighIns';
 
 /*
  * Today → Body → tap the big number: every reading of the last two weeks (back to the latest weigh-in when that is
- * older), newest first. The Hume scale sometimes gets it wrong (and every reading syncs on its own now), so each one
- * can be deleted here; a deleted Hume reading never comes back (lib/healthImport deleteMeasurement remembers it). A
- * typed check-in's photos, tape measurements and note live on the same row: its line says so, and so does the
+ * older), newest first. Each one can be deleted here (a typo, a bad reading). A typed check-in's photos, tape measurements and note live on the same row: its line says so, and so does the
  * confirmation. "All measurements" opens the full history.
  */
 
 const ALL_MEASUREMENTS = '/progress/measurements';
 
-/** Confirm, delete (row + photos + "don't import again"), toast. true when it was deleted. */
+/** Confirm, delete (row + photos), toast. true when it was deleted. */
 export async function deleteWeighIn(item: WeighInItem, unit: Unit): Promise<boolean> {
   if (!(await confirm(deleteWeighInConfirm(item, unit)))) return false;
   try {
@@ -104,7 +102,7 @@ export function WeighInsList({ items, unit, today, busy = false, onDelete }: Wei
   );
 }
 
-/** The sheet (live: deleting goes through lib/healthImport, and the list follows the database). */
+/** The sheet (live: deleting goes through lib/measurements, and the list follows the database). */
 export function WeighInsSheet({
   open,
   onClose,
@@ -145,8 +143,7 @@ export function WeighInsSheet({
     >
       <div className="px-4 pb-4">
         <p className="pb-3 text-[13px] leading-snug text-muted">
-          Your recent readings. One reading a day counts toward your trend: one you typed in, else the latest from
-          Hume.
+          Your recent readings. One reading a day counts toward your trend: the latest one you logged that day.
         </p>
         <WeighInsList items={items} unit={unit} today={today} busy={busy} onDelete={onDelete} />
       </div>

@@ -10,7 +10,7 @@ import { DialogHost, ToastHost } from './ui/dialogs';
 import { cx } from './ui/Button';
 import { MiniWorkoutBar } from '../features/workout/MiniWorkoutBar';
 import { RestTimerWatcher } from '../features/workout/RestTimerWatcher';
-import { HealthInboxWatcher } from '../features/today/HealthInboxWatcher';
+import { forgetHumeSync } from '../lib/legacyHume';
 
 /** localStorage hint read by the inline script in index.html so the first paint uses the saved theme. */
 const THEME_KEY = 'heft.theme';
@@ -54,6 +54,7 @@ export function RootLayout() {
   useEffect(() => {
     void hydrate();
     void requestPersistentStorage();
+    forgetHumeSync();
   }, [hydrate]);
   return (
     <ExerciseProvider>
@@ -61,7 +62,6 @@ export function RootLayout() {
       <ScrollRestoration />
       <Outlet />
       <RestTimerWatcher />
-      <HealthInboxWatcher />
       <DialogHost />
       <ToastHost />
     </ExerciseProvider>

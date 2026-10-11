@@ -1,12 +1,12 @@
 import type { Measurement, Unit } from '../../../types';
 import { dailyWeighIns } from '../../../lib/today';
-import { healthSampleAt } from '../../../lib/healthImport';
+import { healthSampleAt } from '../../../lib/measurements';
 import { dayKey, shiftDay } from '../../../lib/nutrition/math';
 import { plural, readingText } from './format';
 
 /*
- * The model behind Today's "Weigh-ins" sheet: every reading of the last two weeks (each Hume weigh-in is its own
- * row), newest first, so a wrong one can be deleted. When the latest weigh-in is older than that, the list reaches
+ * The model behind Today's "Weigh-ins" sheet: every reading of the last two weeks, newest first, so a wrong one
+ * can be deleted. When the latest weigh-in is older than that, the list reaches
  * back to its day: the card's big number opens this sheet, so it must be there to delete. Pure; the sheet is
  * WeighInsSheet.tsx.
  */
@@ -23,9 +23,9 @@ export interface WeighInItem {
   /** Body weight in kg; null on a body-fat-only reading. */
   kg: number | null;
   bodyFatPct: number | null;
-  /** Came from Apple Health (the Hume scale) and wasn't edited in Heft since. */
+  /** Imported from Apple Health (the Hume scale, before that sync was removed) and not edited in Heft since. */
   hume: boolean;
-  /** Has an Apple Health sample behind it: once deleted, no import brings it back. */
+  /** Has an Apple Health sample behind it (an old import, edited or not). */
   fromHealth: boolean;
   /** The reading the trend and Today use for its day (lib/today dailyWeighIns). */
   counts: boolean;
@@ -118,7 +118,7 @@ export function deleteWeighInConfirm(
   const extra = alsoDeleted(item.row);
   return {
     title: 'Delete this weigh-in?',
-    message: `${what}.${item.fromHealth ? " It won't come back from Hume." : ''}${extra.length ? ` Its ${andList(extra)} will be deleted too.` : ''}`,
+    message: `${what}.${extra.length ? ` Its ${andList(extra)} will be deleted too.` : ''}`,
     danger: true,
     confirmLabel: extra.length ? 'Delete all' : 'Delete',
   };

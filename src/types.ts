@@ -340,9 +340,9 @@ export interface Measurement {
   photoIds: string[];
   notes?: string;
   /**
-   * Where the entry came from: 'health' = imported from Apple Health (lib/healthImport.ts, id "hk_<sample ms>"),
-   * 'manual' (or missing, older data) = typed in Heft. Any user edit of a 'health' row makes it 'manual', and an
-   * import never overwrites a manual row.
+   * Where the entry came from: 'health' = imported from Apple Health by the Hume sync (removed 2026-10-10; id
+   * "hk_<sample ms>"), 'manual' (or missing, older data) = typed in Heft. Any user edit of a 'health' row makes it
+   * 'manual' (lib/measurements.ts editedMeasurement).
    */
   source?: 'manual' | 'health';
   /** Imported rows: epoch ms of the Apple Health sample the row was created from (its anchor weigh-in). */
@@ -387,16 +387,15 @@ export interface Settings {
   /** The "Heft to Health" Shortcut is set up: show "Send to Apple Health" on workouts. */
   appleHealth: boolean;
   /**
-   * The newest Apple Health sample Heft holds (epoch ms), for "last weigh-in from Hume" displays. Since every weigh-in
-   * became its own row (2026-10-06) it no longer decides what an import may add: `healthDeleted` does.
+   * Left from the Hume sync (removed 2026-10-10): the newest Apple Health sample it imported (epoch ms). Unused now;
+   * kept so old settings rows and backups still type-check.
    */
   healthImportedThrough?: number | null;
-  /** Epoch ms of the last saved Apple Health import (null = never). */
+  /** Left from the Hume sync (removed 2026-10-10): epoch ms of its last import. Unused now. */
   healthImportedAt?: number | null;
   /**
-   * Imported weigh-ins the user deleted in Heft (their Apple Health sample time, epoch ms): an import never brings
-   * one back: the deleted sample itself (to the second), or its body fat arriving alone within 10 minutes, unless the
-   * user asks to bring deleted weigh-ins back. Written by lib/healthImport.ts deleteMeasurement().
+   * Left from the Hume sync (removed 2026-10-10): the imported weigh-ins the user deleted (Apple Health sample time,
+   * epoch ms), so it wouldn't import them again. Unused now.
    */
   healthDeleted?: number[];
 }

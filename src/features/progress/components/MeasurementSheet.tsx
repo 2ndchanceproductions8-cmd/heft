@@ -6,7 +6,7 @@ import { db } from '../../../db';
 import { Button, Field, Sheet, Spinner, TextArea, TextField, confirm, cx, toast } from '../../../components/ui';
 import { deleteMedia, saveImageFile, useMediaUrl } from '../../../lib/media';
 import { newestWeighIn, updateSettings } from '../../../lib/settings';
-import { deleteMeasurement, editedMeasurement, healthSampleAt } from '../../../lib/healthImport';
+import { deleteMeasurement, editedMeasurement, healthSampleAt } from '../../../lib/measurements';
 import { uid } from '../../../lib/ids';
 import { kgToUnit, parseDecimal, round, unitToKg } from '../../../lib/units';
 import { cmToLength, lengthToCm, lengthUnitFor } from '../format';
@@ -62,8 +62,7 @@ export interface MeasurementForm {
 
 /**
  * The row Save writes. `entry` is the row the sheet opened with (null = new), `base` that row as stored at save time:
- * a field the user didn't touch keeps base's value, so a weight the automatic sync joined on (or the time it moved
- * to) while the sheet was open survives.
+ * a field the user didn't touch keeps base's value exactly.
  */
 export function measurementFromForm(
   entry: Measurement | null,
@@ -99,8 +98,8 @@ export function measurementFromForm(
     values.weight !== initial.weight ||
     values.bodyFat !== initial.bodyFat ||
     dateStr !== format(entry?.date ?? Date.now(), 'yyyy-MM-dd');
-  // Start from the stored row so fields this form doesn't show (source, healthAt, …) survive; an Apple Health row
-  // whose values the user changed becomes theirs, so a later import never overwrites it.
+  // Start from the stored row so fields this form doesn't show (source, healthAt, …) survive; an old Apple Health row
+  // whose values the user changed becomes theirs.
   return editedMeasurement(base, changes, valuesEdited);
 }
 
@@ -234,8 +233,7 @@ export function MeasurementSheet({ open, entry, unit, onClose }: Props) {
     if (!valid || date == null || saving) return;
     setSaving(true);
     try {
-      // The row as stored now, not the snapshot the sheet opened with: the automatic sync can join a weight onto it
-      // (and move its time) while the sheet is open.
+      // The row as stored now, not the snapshot the sheet opened with.
       const base = entry ? ((await db.measurements.get(entry.id)) ?? entry) : null;
       const rec = measurementFromForm(entry, base, { initial, values, parsed, dateStr, date, notes, photoIds }, unit);
       const newestBefore = await newestWeighIn();
@@ -262,21 +260,19 @@ export function MeasurementSheet({ open, entry, unit, onClose }: Props) {
 
   const remove = async () => {
     if (!entry) return;
-    // From Apple Health (imported, or imported and edited since): there can be several a day, so name the time too.
+    // From Apple Health (imported before the sync was removed): there can be several a day, so name the time too.
     const fromHealth = healthSampleAt(entry) != null;
     const when = format(entry.date, fromHealth ? "MMM d, yyyy 'at' h:mm a" : 'MMM d, yyyy');
     const ok = await confirm({
       title: 'Delete measurement?',
-      message: `The entry from ${when}${entry.photoIds.length ? ' and its photos' : ''} will be deleted.${
-        fromHealth ? " It won't come back from Hume." : ''
-      }`,
+      message: `The entry from ${when}${entry.photoIds.length ? ' and its photos' : ''} will be deleted.`,
       confirmLabel: 'Delete',
       danger: true,
     });
     if (!ok) return;
     try {
       const wasNewest = (await newestWeighIn())?.id === entry.id;
-      // THE delete: the row, its stored photos and, for an Apple Health weigh-in, a note so no import brings it back.
+      // THE delete: the row and its stored photos.
       await deleteMeasurement(entry);
       // Photos uploaded in this session and not saved yet aren't in the stored row.
       const unsaved = added.current.filter((id) => !entry.photoIds.includes(id));
@@ -326,9 +322,8 @@ export function MeasurementSheet({ open, entry, unit, onClose }: Props) {
             <p className="flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2.5 text-[13px] leading-snug text-muted">
               <Heart className="mt-0.5 h-4 w-4 shrink-0 text-danger" fill="currentColor" />
               <span>
-                Imported from Apple Health. If you change its weight, body fat or date, it becomes your own entry and
-                imports leave it alone. Notes and photos don't change that. If the scale got it wrong, delete it: it
-                won't come back.
+                Imported from Apple Health. If you change its weight, body fat or date, it becomes your own entry. If the
+                scale got it wrong, delete it.
               </span>
             </p>
           ) : null}

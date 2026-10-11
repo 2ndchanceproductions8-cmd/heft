@@ -3,10 +3,9 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /*
- * NO GITHUB TOKENS IN THE SOURCE. Heft's repo and Pages site are public. The automatic Hume sync reads the private
- * heft-inbox repo with a GitHub key the owner pastes into the app (lib/healthInbox.ts keeps it in this browser's
- * localStorage only), so a real token must never be committed: not in code, a fixture, a test or a comment. Fake
- * tokens in tests stay short and obvious ('github_pat_TEST').
+ * NO GITHUB TOKENS IN THE SOURCE. Heft's repo and Pages site are public, so a real token must never be committed:
+ * not in code, a fixture, a test or a comment. (The automatic Hume sync, removed 2026-10-10, used one; the guard
+ * stays.) Fake tokens in tests stay short and obvious ('github_pat_TEST').
  *
  * Same shape as lib/nutrition/guard.test.ts (which guards the Anthropic key). Offenders are reported by file and line
  * only: the matched text is never printed.

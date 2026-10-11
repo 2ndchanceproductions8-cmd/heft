@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChevronRight, Heart, Plus, TrendingDown, TrendingUp, Weight } from 'lucide-react';
+import { ArrowRight, ChevronRight, Plus, TrendingDown, TrendingUp, Weight } from 'lucide-react';
 import type { Unit } from '../../../types';
 import type { BodySummary } from '../../../lib/today';
 import { Card, cx } from '../../../components/ui';
@@ -22,10 +22,11 @@ import {
 } from './format';
 
 /*
- * Today → Body: where the scale says the owner stands. The latest weigh-in (the Hume Body Pod via Apple Health, or
- * typed in), the smoothed trend and its weekly pace against the calorie target's pace, body fat, and 30 days of
- * weigh-ins. Tapping the big number opens the Weigh-ins sheet (every reading of the last two weeks, each one
- * deletable); the rest of the card opens Measurements. Siblings, never nested: no button inside a link.
+ * Today → Body: where the scale says the owner stands. The latest weigh-in (typed in), the smoothed trend and its
+ * weekly pace against the calorie target's pace, body fat, and 30 days of weigh-ins. Until today's weight is in,
+ * the card ends with "Log today's weight". Tapping the big number opens the Weigh-ins sheet (every reading of the
+ * last two weeks, each one deletable); the rest of the card opens Measurements. Siblings, never nested: no button
+ * inside a link.
  * Pure view: everything arrives as props (BodyCard reads the data).
  */
 
@@ -43,13 +44,22 @@ export interface BodyCardViewProps {
   profileKg: number | null;
   /** goalRateKgPerWeek(targets): the pace the calorie target is built for; null without targets. */
   goalRateKg: number | null;
-  /** The Hume scale row (iPhone / iPad, or anywhere once automatic sync is set up), under the card's content. */
-  sync?: ReactNode;
   /** Opens the Weigh-ins sheet; the big number is its button. Without it the number is plain text. */
   onShowWeighIns?: () => void;
+  /** Opens the new weigh-in sheet in place. Without it the log buttons link to Measurements' Add sheet. */
+  onLogWeight?: () => void;
 }
 
-export function BodyCardView({ today, now, unit, summary, profileKg, goalRateKg, sync, onShowWeighIns }: BodyCardViewProps) {
+export function BodyCardView({
+  today,
+  now,
+  unit,
+  summary,
+  profileKg,
+  goalRateKg,
+  onShowWeighIns,
+  onLogWeight,
+}: BodyCardViewProps) {
   let body: ReactNode;
   if (summary === undefined) body = <BodyLoading />;
   else if (summary.latest)
@@ -61,38 +71,23 @@ export function BodyCardView({ today, now, unit, summary, profileKg, goalRateKg,
         summary={summary}
         goalRateKg={goalRateKg}
         onShowWeighIns={onShowWeighIns}
+        onLogWeight={onLogWeight}
       />
     );
-  else body = <BodyEmpty unit={unit} profileKg={profileKg} />;
-  return (
-    <Card className="overflow-hidden">
-      {body}
-      {sync ?? null}
-    </Card>
-  );
+  else body = <BodyEmpty unit={unit} profileKg={profileKg} onLogWeight={onLogWeight} />;
+  return <Card className="overflow-hidden">{body}</Card>;
 }
 
 // ------------------------------------------------------------------ pieces
 
-function TitleRow({ healthTag = false, chevron = true }: { healthTag?: boolean; chevron?: boolean }) {
+function TitleRow({ chevron = true }: { chevron?: boolean }) {
   return (
     <div className="flex min-h-8 items-center justify-between gap-3">
       <h2 className="flex min-w-0 items-center gap-2 text-[17px] font-semibold">
         <Weight className="h-[18px] w-[18px] shrink-0 text-accent" aria-hidden />
         <span className="truncate">Body</span>
       </h2>
-      <span className="flex shrink-0 items-center gap-1.5">
-        {healthTag ? (
-          <span
-            className="flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 text-[12px] font-semibold text-muted"
-            data-tag="health"
-          >
-            <Heart className="h-3 w-3 text-danger" fill="currentColor" aria-hidden />
-            Hume · Health
-          </span>
-        ) : null}
-        {chevron ? <ChevronRight className="h-5 w-5 text-faint" aria-hidden /> : null}
-      </span>
+      {chevron ? <ChevronRight className="h-5 w-5 shrink-0 text-faint" aria-hidden /> : null}
     </div>
   );
 }
@@ -141,6 +136,25 @@ function RatePill({ rateKg, goalRateKg, unit }: { rateKg: number; goalRateKg: nu
 const actionLink =
   'inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-accent-soft px-4 text-[15px] font-semibold text-accent active:brightness-110';
 
+/** A log-a-weigh-in action: opens the sheet in place (onLogWeight), else links to Measurements' Add sheet. */
+function LogWeight({ onLogWeight, className, children }: { onLogWeight?: () => void; className?: string; children: ReactNode }) {
+  const inner = (
+    <>
+      <Plus className="h-4 w-4" aria-hidden />
+      {children}
+    </>
+  );
+  return onLogWeight ? (
+    <button type="button" onClick={onLogWeight} aria-haspopup="dialog" className={cx(actionLink, className)} data-action="log-weight">
+      {inner}
+    </button>
+  ) : (
+    <Link to={ADD_WEIGH_IN} className={cx(actionLink, className)} data-action="log-weight">
+      {inner}
+    </Link>
+  );
+}
+
 // ------------------------------------------------------------------ states
 
 function BodyLoading() {
@@ -155,7 +169,7 @@ function BodyLoading() {
   );
 }
 
-function BodyEmpty({ unit, profileKg }: { unit: Unit; profileKg: number | null }) {
+function BodyEmpty({ unit, profileKg, onLogWeight }: { unit: Unit; profileKg: number | null; onLogWeight?: () => void }) {
   const hasProfile = profileKg != null && Number.isFinite(profileKg) && profileKg > 0;
   return (
     <div data-state={hasProfile ? 'profile' : 'empty'}>
@@ -168,18 +182,14 @@ function BodyEmpty({ unit, profileKg }: { unit: Unit; profileKg: number | null }
             <BigWeight kg={profileKg} unit={unit} />
             <div className="mt-1.5 truncate text-[13px] text-muted">From your profile</div>
           </div>
-          <Link to={ADD_WEIGH_IN} className={actionLink}>
-            <Plus className="h-4 w-4" aria-hidden />
-            Log a weigh-in
-          </Link>
+          <LogWeight onLogWeight={onLogWeight}>Log a weigh-in</LogWeight>
         </div>
       ) : (
         <div className="px-4 pb-4">
           <p className="text-[14px] text-muted">Weigh in to start your trend.</p>
-          <Link to={ADD_WEIGH_IN} className={cx(actionLink, 'mt-3')}>
-            <Plus className="h-4 w-4" aria-hidden />
+          <LogWeight onLogWeight={onLogWeight} className="mt-3">
             Add your weight
-          </Link>
+          </LogWeight>
         </div>
       )}
     </div>
@@ -193,6 +203,7 @@ function BodyNormal({
   summary,
   goalRateKg,
   onShowWeighIns,
+  onLogWeight,
 }: {
   today: string;
   now: number;
@@ -200,6 +211,7 @@ function BodyNormal({
   summary: BodySummary;
   goalRateKg: number | null;
   onShowWeighIns?: () => void;
+  onLogWeight?: () => void;
 }) {
   const latest = summary.latest!;
   const daysAgo = summary.daysSinceWeighIn ?? 0;
@@ -232,7 +244,7 @@ function BodyNormal({
   return (
     <div data-state="normal">
       <Link to={MEASUREMENTS} className={cx('block px-4 pt-4 pb-2', tap)}>
-        <TitleRow healthTag={latest.source === 'health'} />
+        <TitleRow />
       </Link>
 
       <div className="flex items-stretch">
@@ -285,6 +297,14 @@ function BodyNormal({
           <p className="mt-3 text-[13px] text-muted">Weigh in again to start the 30-day chart.</p>
         )}
       </Link>
+
+      {latest.day !== today ? (
+        <div className="border-t border-line px-4 pt-3 pb-4" data-part="log-today">
+          <LogWeight onLogWeight={onLogWeight} className="w-full">
+            Log today's weight
+          </LogWeight>
+        </div>
+      ) : null}
     </div>
   );
 }
