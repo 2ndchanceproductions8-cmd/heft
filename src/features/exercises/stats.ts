@@ -48,6 +48,24 @@ export function computeUsage(workouts: Workout[]): ExerciseUsage {
   return { byId, recentIds };
 }
 
+/** The row's "done before" data, or undefined for an exercise never logged. */
+export function usedInfo(usage: ExerciseUsage | undefined, id: string): { count: number; lastAt: number } | undefined {
+  const u = usage?.byId.get(id);
+  return u ? { count: u.count, lastAt: u.lastAt } : undefined;
+}
+
+/**
+ * Search results with the exercises you've logged first (most often first), the rest in search order: typing
+ * "lat pulldown" puts YOUR lat pulldown above the look-alikes you've never done.
+ */
+export function usedFirst<T extends { id: string }>(results: T[], usage: ExerciseUsage | undefined): T[] {
+  if (!usage?.byId.size) return results;
+  const used = results.filter((e) => usage.byId.has(e.id));
+  if (!used.length) return results;
+  used.sort((a, b) => usage.byId.get(b.id)!.count - usage.byId.get(a.id)!.count);
+  return [...used, ...results.filter((e) => !usage.byId.has(e.id))];
+}
+
 // ---------------------------------------------------------------- best set of a session
 
 type Tuple = number[];

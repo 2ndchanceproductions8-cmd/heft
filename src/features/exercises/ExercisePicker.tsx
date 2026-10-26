@@ -18,7 +18,7 @@ import { hasFinePointer, scrollParent, useExerciseUsage } from './hooks';
 import { HeaderButton } from './parts';
 import { browseRoutineId, exKey, rtKey, selectCreated, type PickerSelection } from './selection';
 import { readPref, writePref } from '../progress/format';
-import { bestSet } from './stats';
+import { bestSet, usedFirst, usedInfo } from './stats';
 
 export interface ExercisePickerProps {
   open: boolean;
@@ -174,7 +174,10 @@ function PickerSheet({
     [equipment, muscle],
   );
 
-  const results = useMemo(() => searchExercises(index.list, q, { equipment, muscle }), [index.list, q, equipment, muscle]);
+  const results = useMemo(() => {
+    const found = searchExercises(index.list, q, { equipment, muscle });
+    return q.trim() ? usedFirst(found, usage) : found;
+  }, [index.list, q, equipment, muscle, usage]);
 
   const recent = useMemo(() => {
     if (!usage) return undefined;
@@ -275,7 +278,7 @@ function PickerSheet({
     <ExerciseRow
       key={ex.id}
       exercise={ex}
-      count={usage?.byId.get(ex.id)?.count}
+      used={usedInfo(usage, ex.id)}
       selected={selectedKeys.has(exKey(ex.id))}
       onPress={pressExercise}
       onMore={openActions}
@@ -367,7 +370,7 @@ function PickerSheet({
                   key={ex.id}
                   exercise={ex}
                   subtitle={sub}
-                  count={u?.count}
+                  used={usedInfo(usage, ex.id)}
                   selected={selectedKeys.has(exKey(ex.id))}
                   onPress={pressExercise}
                   onMore={openActions}

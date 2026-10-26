@@ -10,6 +10,7 @@ import { IncrementalList } from './ExerciseList';
 import { ExerciseRow } from './ExerciseRow';
 import { FilterBar, SearchField } from './FilterSheets';
 import { useExerciseUsage } from './hooks';
+import { usedFirst, usedInfo } from './stats';
 
 type Tab = 'all' | 'mine';
 
@@ -55,9 +56,10 @@ export function ExerciseLibraryPage() {
   }, [searchKey]);
 
   const items = useMemo(() => {
-    const list = searchExercises(index.list, q, { equipment, muscle, includeHidden: showHidden });
+    const found = searchExercises(index.list, q, { equipment, muscle, includeHidden: showHidden });
+    const list = q.trim() ? usedFirst(found, usage) : found;
     return tab === 'mine' ? list.filter(isMine) : list;
-  }, [index.list, q, equipment, muscle, showHidden, tab]);
+  }, [index.list, q, equipment, muscle, showHidden, tab, usage]);
 
   const hiddenCount = useMemo(() => index.list.filter((e) => e.hidden).length, [index.list]);
   const hiddenMatches = useMemo(() => {
@@ -134,7 +136,7 @@ export function ExerciseLibraryPage() {
                 <ExerciseRow
                   key={ex.id}
                   exercise={ex}
-                  count={usage?.byId.get(ex.id)?.count}
+                  used={usedInfo(usage, ex.id)}
                   onPress={open}
                   onMore={openActions}
                 />

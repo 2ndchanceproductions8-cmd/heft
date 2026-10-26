@@ -4,6 +4,7 @@ import type { Exercise } from '../../types';
 import { ExerciseThumb } from '../../components/ExerciseImage';
 import { cx } from '../../components/ui';
 import { EQUIPMENT_LABEL, MUSCLE_LABEL } from '../../lib/exerciseMeta';
+import { relativeDay } from './format';
 import { useLongPress } from './hooks';
 
 /** "Lats · Cable" (+ brand for gym/brand variants). */
@@ -20,8 +21,11 @@ export interface ExerciseRowProps {
   onMore?: (ex: Exercise) => void;
   /** Overrides the default "Muscle · Equipment" line. */
   subtitle?: ReactNode;
-  /** Times performed — shown as "12x" when > 0. */
-  count?: number;
+  /**
+   * Logged before (computeUsage): a green check on the thumbnail and "Done 12× · 3 days ago" ahead of the muscle
+   * line, so the one you always do stands out among look-alikes. With a custom `subtitle`, the count sits on the right.
+   */
+  used?: { count: number; lastAt: number };
   selected?: boolean;
   /** Extra content on the right (before the ⋯ button). */
   right?: ReactNode;
@@ -34,7 +38,7 @@ export const ExerciseRow = memo(function ExerciseRow({
   onPress,
   onMore,
   subtitle,
-  count,
+  used,
   selected,
   right,
   className,
@@ -58,15 +62,39 @@ export const ExerciseRow = memo(function ExerciseRow({
           !selected && 'active:bg-surface-2',
         )}
       >
-        <ExerciseThumb exercise={exercise} size={44} />
+        <span className="relative shrink-0">
+          <ExerciseThumb exercise={exercise} size={44} />
+          {used ? (
+            <span
+              className="absolute -right-1 -bottom-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-success text-white shadow-sm"
+              aria-label="Done before"
+            >
+              <Check className="h-3 w-3" strokeWidth={3.5} />
+            </span>
+          ) : null}
+        </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[16px] leading-snug font-medium">{exercise.name}</span>
           <span className="flex items-center gap-1 truncate text-[13px] leading-snug text-muted">
             {exercise.hidden ? <EyeOff className="h-3.5 w-3.5 shrink-0 text-faint" aria-label="Hidden" /> : null}
-            <span className="truncate">{subtitle ?? exerciseSubtitle(exercise)}</span>
+            <span className="truncate">
+              {subtitle ?? (
+                <>
+                  {used ? (
+                    <span className="font-semibold text-success">
+                      Done {used.count}× · {relativeDay(used.lastAt)}
+                      {' · '}
+                    </span>
+                  ) : null}
+                  {exerciseSubtitle(exercise)}
+                </>
+              )}
+            </span>
           </span>
         </span>
-        {count ? <span className="shrink-0 text-[13px] font-medium text-faint tabular-nums">{count}x</span> : null}
+        {used && subtitle != null ? (
+          <span className="shrink-0 text-[13px] font-medium text-faint tabular-nums">{used.count}x</span>
+        ) : null}
         {right}
         {selected ? (
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">

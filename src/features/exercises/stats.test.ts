@@ -3,7 +3,7 @@ import type { RoutineSet, SetEntry, Workout, WorkoutExercise } from '../../types
 import { exerciseSessions } from '../../lib/calc';
 import { KG_PER_LB, anyToMeters } from '../../lib/units';
 import { deleteExerciseCopy, formatSetValue, relativeDay, routineSetsSummary, setLabels } from './format';
-import { bestSet, computeUsage, lifetimeTotals, metricsFor, personalRecords } from './stats';
+import { bestSet, computeUsage, lifetimeTotals, metricsFor, personalRecords, usedFirst, usedInfo } from './stats';
 import { browseRoutineId, exKey, rtKey, selectCreated } from './selection';
 import { formatAxis, formatValue, toDisplay } from './ExerciseChart';
 
@@ -127,6 +127,28 @@ describe('computeUsage', () => {
     expect(u.byId.get('bench')?.lastWorkoutId).toBe('w3');
     expect(u.byId.get('bench')?.lastSets.map((s) => s.weightKg)).toEqual([65, 40]);
     expect(u.byId.get('row')?.count).toBe(1);
+  });
+});
+
+describe('done before: usedInfo + usedFirst (search marks and ranks what you have logged)', () => {
+  const w1 = workout('w1', 1000, [we('pulldown_hammer', [set({ weightKg: 60, reps: 10 })]), we('row', [set({ weightKg: 50, reps: 8 })])]);
+  const w2 = workout('w2', 2000, [we('pulldown_hammer', [set({ weightKg: 62.5, reps: 10 })])]);
+  const usage = computeUsage([w2, w1]);
+  const results = ['pulldown_wide', 'pulldown_cable', 'row', 'pulldown_hammer', 'pulldown_close'].map((id) => ({ id }));
+
+  it('count and last date for a logged exercise, nothing for a new one', () => {
+    expect(usedInfo(usage, 'pulldown_hammer')).toEqual({ count: 2, lastAt: 2000 });
+    expect(usedInfo(usage, 'pulldown_wide')).toBeUndefined();
+    expect(usedInfo(undefined, 'row')).toBeUndefined();
+  });
+
+  it('logged exercises first (most done first), everything else keeps the search order', () => {
+    expect(usedFirst(results, usage).map((e) => e.id)).toEqual(['pulldown_hammer', 'row', 'pulldown_wide', 'pulldown_cable', 'pulldown_close']);
+  });
+
+  it('no history (or still loading) → the search order unchanged', () => {
+    expect(usedFirst(results, undefined)).toBe(results);
+    expect(usedFirst(results, computeUsage([]))).toBe(results);
   });
 });
 
