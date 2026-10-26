@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { dayKey, recomputeMeal, shiftDay } from '../../lib/nutrition/math';
 import type { FoodChoice, Meal, MealItem, NutrientSource, Per100g } from '../../lib/nutrition/types';
 import { convertMassText, flipMassText, gramsFromField, massText, QuickAmounts, SourceChip } from './ui';
-import { FoodRow, SearchMessage } from './FoodSearchSheet';
+import { FoodRow, OfflineNote, SearchMessage, SearchOnlineButton } from './FoodSearchSheet';
 import { captureDay, CapturePage, draftText, parseWeightField } from './CapturePage';
 import { MealPage } from './MealPage';
 import { ScanPage, scanTargetBanner } from './ScanPage';
@@ -317,6 +317,14 @@ describe('FoodSearchSheet parts', () => {
     expect(failed).toContain("Couldn't reach USDA. Check your connection.");
     expect(failed).toContain('Try again');
   });
+
+  it('offline index: why partial matches are shown, and the way to the live API', () => {
+    expect(text(h(OfflineNote, { apiStatus: 'failed' }))).toContain("Couldn't reach USDA — closest matches from the offline database.");
+    expect(text(h(OfflineNote, { apiStatus: 'rate_limited' }))).toContain('USDA is busy — closest matches');
+    expect(text(h(OfflineNote, { apiStatus: 'key_rejected' }))).toContain('USDA rejected your key — closest matches');
+    expect(text(h(SearchOnlineButton, { onClick: noop }))).toContain('Not here? Search USDA online');
+    expect(text(h(SearchMessage, { kind: 'start' }))).toContain('Whole foods work offline.');
+  });
 });
 
 describe('capture', () => {
@@ -440,6 +448,14 @@ describe('helpers', () => {
     ]);
     expect(quickAmounts(null)).toEqual([{ label: '100 g', grams: 100 }]);
     expect(quickAmounts(100)).toEqual([{ label: '1 serving (100 g)', grams: 100 }]);
+  });
+
+  it('quick amounts: USDA household measures (bundled index) between the label serving and 100 g', () => {
+    expect(quickAmounts(null, [{ label: '1 cup', grams: 158 }, { label: '1 oz', grams: 28.35 }])).toEqual([
+      { label: '1 cup (158 g)', grams: 158 },
+      { label: '1 oz (28.4 g)', grams: 28.35 },
+      { label: '100 g', grams: 100 },
+    ]);
   });
 
   it('barcode spellings for the offline cache', () => {

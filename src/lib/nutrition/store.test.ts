@@ -7,6 +7,7 @@ import {
   createMeal,
   deleteMeal,
   foodByBarcode,
+  itemFromChoice,
   loadAiSpend,
   recordSpend,
   loadTargets,
@@ -94,6 +95,12 @@ describe('food library', () => {
     expect(f.useCount).toBe(2);
     expect(f.lastUsedAt).toBe(2);
     expect((await foodByBarcode('3017624010701'))?.name).toBe('Nutella');
+  });
+
+  it('a bundled-index pick stays a USDA database value, marked bundled; a label product is not', () => {
+    const rice: FoodChoice = { id: 'usda:168878', name: 'Rice, white, long-grain, regular, enriched, cooked', source: 'usda', fdcId: 168878, per100g: RICE, servingG: null, portions: [{ label: '1 cup', grams: 158 }], bundled: true };
+    expect(itemFromChoice(rice, 158)).toMatchObject({ source: 'usda', fdcId: 168878, lookup: 'ok', bundled: true, grams: 158 });
+    expect(itemFromChoice(nutella, 15)).not.toHaveProperty('bundled');
   });
 });
 

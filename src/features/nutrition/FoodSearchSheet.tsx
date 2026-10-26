@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, Search, X } from 'lucide-react';
+import { ChevronRight, Globe, Search, X } from 'lucide-react';
 import { Button, Sheet, Spinner } from '../../components/ui';
+import { loadedFoodIndex, portionsFor, warmFoodIndex } from '../../lib/nutrition/foodIndex';
 import { choiceFromFood, upsertFood, useRecentFoods } from '../../lib/nutrition/store';
-import { searchFoods } from '../../lib/nutrition/usda';
+import { findFoods, type FindResult } from '../../lib/nutrition/usda';
 import type { FoodChoice } from '../../lib/nutrition/types';
 import { GramsSheet, SourceChip } from './ui';
 import { per100Line, quickAmounts } from './meal/format';
@@ -23,8 +24,10 @@ export interface FoodSearchSheetProps {
 }
 
 /**
- * Full-height USDA search: recents when the query is empty, otherwise a debounced FoodData Central search.
- * Every response state (loading / no matches / rate limited / key rejected / unreachable) has its own message.
+ * Full-height USDA search: recents when the query is empty, otherwise findFoods — the bundled offline index first
+ * (instant, as you type), the live FoodData Central API (debounced) only when the index has no good match or the
+ * user taps "Search USDA online". Every response state (loading / no matches / rate limited / key rejected /
+ * unreachable, and offline matches shown because USDA couldn't answer) has its own message.
  */
 export function FoodSearchSheet({ open, onClose, mode, initialQuery, title, onPick }: FoodSearchSheetProps) {
   return (
@@ -44,11 +47,12 @@ export function FoodSearchSheet({ open, onClose, mode, initialQuery, title, onPi
 type SearchState =
   | { kind: 'idle' }
   | { kind: 'loading'; q: string }
-  | { kind: 'ok'; q: string; foods: FoodChoice[] }
+  | { kind: 'ok'; q: string; foods: FoodChoice[]; from: FindResult['from']; apiStatus?: FindResult['apiStatus'] }
   | { kind: 'rate_limited'; q: string; demoKey: boolean }
   | { kind: 'key_rejected'; q: string }
   | { kind: 'failed'; q: string };
 
+/** Typing pause before the live API is asked (DEMO_KEY allows ~10 requests an hour). The index needs none. */
 const DEBOUNCE_MS = 350;
 
 function SearchBody({
@@ -67,36 +71,52 @@ function SearchBody({
   const [state, setState] = useState<SearchState>({ kind: 'idle' });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [amountFor, setAmountFor] = useState<FoodChoice | null>(null);
+  // "Search USDA online" for this exact term (a new term searches the index again).
+  const [onlineFor, setOnlineFor] = useState<string | null>(null);
   const recents = useRecentFoods();
   const term = q.trim();
+  const online = onlineFor === term;
+
+  useEffect(warmFoodIndex, []);
 
   useEffect(() => {
     if (!term) {
       setState({ kind: 'idle' });
       return;
     }
-    setState({ kind: 'loading', q: term });
+    // With the index in memory the answer is instant: keep the last list up instead of flashing "Searching…"
+    // on every keystroke (findFoods calls onLive if it has to go to the API after all).
+    const instant = !online && !!loadedFoodIndex();
+    if (!instant) setState({ kind: 'loading', q: term });
     // One controller per query: a newer keystroke aborts the older request, and a late answer to an
     // aborted request is ignored, so results can never arrive out of order.
     const ctrl = new AbortController();
-    const timer = window.setTimeout(() => {
-      searchFoods(term, { signal: ctrl.signal })
-        .then((r) => {
-          if (ctrl.signal.aborted) return;
-          if (r.status === 'ok') setState({ kind: 'ok', q: term, foods: r.foods });
-          else if (r.status === 'rate_limited') setState({ kind: 'rate_limited', q: term, demoKey: r.demoKey });
-          else if (r.status === 'key_rejected') setState({ kind: 'key_rejected', q: term });
-          else setState({ kind: 'failed', q: term });
+    const timer = window.setTimeout(
+      () => {
+        findFoods(term, {
+          signal: ctrl.signal,
+          online,
+          liveDelayMs: instant ? DEBOUNCE_MS : 0,
+          onLive: () => !ctrl.signal.aborted && setState({ kind: 'loading', q: term }),
         })
-        .catch(() => {
-          if (!ctrl.signal.aborted) setState({ kind: 'failed', q: term });
-        });
-    }, DEBOUNCE_MS);
+          .then((r) => {
+            if (ctrl.signal.aborted) return;
+            if (r.status === 'ok') setState({ kind: 'ok', q: term, foods: r.foods, from: r.from, apiStatus: r.apiStatus });
+            else if (r.status === 'rate_limited') setState({ kind: 'rate_limited', q: term, demoKey: r.demoKey });
+            else if (r.status === 'key_rejected') setState({ kind: 'key_rejected', q: term });
+            else setState({ kind: 'failed', q: term });
+          })
+          .catch(() => {
+            if (!ctrl.signal.aborted) setState({ kind: 'failed', q: term });
+          });
+      },
+      instant ? 0 : DEBOUNCE_MS,
+    );
     return () => {
       window.clearTimeout(timer);
       ctrl.abort();
     };
-  }, [term, nonce]);
+  }, [term, nonce, online]);
 
   const pick = async (c: FoodChoice) => {
     if (busyId) return;
@@ -127,8 +147,13 @@ function SearchBody({
         </>
       );
   } else if (state.kind === 'ok') {
+    const searchOnline = state.from === 'bundled' && !state.apiStatus ? () => setOnlineFor(term) : undefined;
     body = state.foods.length ? (
-      <FoodList foods={state.foods} busyId={busyId} onPick={(c) => void pick(c)} />
+      <>
+        {state.apiStatus ? <OfflineNote apiStatus={state.apiStatus} /> : null}
+        <FoodList foods={state.foods} busyId={busyId} onPick={(c) => void pick(c)} />
+        {searchOnline ? <SearchOnlineButton onClick={searchOnline} /> : null}
+      </>
     ) : (
       <SearchMessage kind="no_matches" query={state.q} />
     );
@@ -178,7 +203,8 @@ function SearchBody({
         title={amountFor?.name ?? ''}
         subtitle={amountFor ? `Per 100 g: ${per100Line(amountFor.per100g)}` : undefined}
         initialGrams={amountFor?.servingG ?? 100}
-        quick={quickAmounts(amountFor?.servingG)}
+        // A recent food comes back from the library without its measures: the loaded index has them by fdcId.
+        quick={quickAmounts(amountFor?.servingG, amountFor?.portions ?? portionsFor(amountFor?.fdcId))}
         onSave={(g) => {
           if (!amountFor) return;
           onPick(amountFor, g);
@@ -196,6 +222,31 @@ function FoodList({ foods, busyId, onPick }: { foods: FoodChoice[]; busyId: stri
         <FoodRow key={f.id} food={f} busy={busyId === f.id} disabled={!!busyId} onPick={() => onPick(f)} />
       ))}
     </div>
+  );
+}
+
+/** Offline matches are on screen because the live API couldn't answer: say why. */
+export function OfflineNote({ apiStatus }: { apiStatus: NonNullable<FindResult['apiStatus']> }) {
+  const why =
+    apiStatus === 'rate_limited' ? 'USDA is busy' : apiStatus === 'key_rejected' ? 'USDA rejected your key' : "Couldn't reach USDA";
+  return (
+    <div className="pb-2 text-[13px] leading-snug text-muted" role="status">
+      {why} — closest matches from the offline database.
+    </div>
+  );
+}
+
+/** Under offline results: ask the live API instead (brands, foods the index doesn't have). */
+export function SearchOnlineButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl text-[15px] font-medium text-accent active:opacity-60"
+    >
+      <Globe className="h-4 w-4" />
+      Not here? Search USDA online
+    </button>
   );
 }
 
@@ -248,7 +299,7 @@ export function SearchMessage({
   let message: string;
   if (kind === 'start') {
     title = 'Search USDA FoodData Central';
-    message = 'Type a food, e.g. "greek yogurt" or "banana". Foods you pick show up here next time.';
+    message = 'Type a food, e.g. "greek yogurt" or "banana". Whole foods work offline. Foods you pick show up here next time.';
   } else if (kind === 'no_matches') {
     title = query ? `No matches for “${query}”` : 'No matches';
     message = 'Try fewer or more general words, e.g. "rice" instead of "jasmine rice bowl".';

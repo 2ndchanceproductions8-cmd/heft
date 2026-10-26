@@ -16,3 +16,5 @@ Develop: `npm install`, `npm run dev` (port 5180), `npm test`, `npm run build`. 
 Exercise images and instructions: [free-exercise-db](https://github.com/yuhonas/free-exercise-db) (public domain).
 
 Muscle map body artwork: [MuscleMap](https://github.com/melihcolpan/MuscleMap) by Melih Colpan (MIT, see `THIRD_PARTY_NOTICES.md`).
+
+Offline food index: [USDA FoodData Central](https://fdc.nal.usda.gov/) Foundation, SR Legacy and FNDDS (public domain, see `THIRD_PARTY_NOTICES.md`).

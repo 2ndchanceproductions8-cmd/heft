@@ -68,6 +68,12 @@ export interface MealItem {
   /** Claude's USDA search phrase, kept so the item can be re-matched. */
   fdcQuery?: string;
   lookup?: LookupStatus;
+  /**
+   * The USDA numbers came from the bundled offline index (lib/nutrition/foodIndex.ts) rather than the live API:
+   * the same USDA rows, kept for provenance. Still `source: 'usda'`, so a database value is never confused with
+   * Claude's estimate.
+   */
+  bundled?: true;
 }
 
 export interface MealInput {
@@ -192,4 +198,14 @@ export interface FoodChoice {
   servingG: number | null;
   /** USDA dataType ("Foundation", "SR Legacy", "Survey (FNDDS)", "Branded") when known. */
   dataType?: string;
+  /** Household measures (bundled index foods), offered as one-tap amounts. */
+  portions?: FoodPortion[];
+  /** From the bundled offline index (see MealItem.bundled). */
+  bundled?: true;
+}
+
+/** A household measure of a food, e.g. {label: '1 cup, chopped', grams: 180}. */
+export interface FoodPortion {
+  label: string;
+  grams: number;
 }

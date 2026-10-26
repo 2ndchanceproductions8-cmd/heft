@@ -1,0 +1,833 @@
+{
+  "FoundationFoods": [
+    {
+      "fdcId": 323505,
+      "description": "Kale, raw",
+      "dataType": "Foundation",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 2.92
+        },
+        {
+          "nutrient": {
+            "number": "268",
+            "name": "Energy",
+            "unitName": "kJ"
+          },
+          "amount": 148
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 4.1
+        },
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 53
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 1.49
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 4.42
+        },
+        {
+          "nutrient": {
+            "number": "208",
+            "name": "Energy",
+            "unitName": "kcal"
+          },
+          "amount": 35
+        },
+        {
+          "nutrient": {
+            "number": "269.3",
+            "name": "Sugars, Total",
+            "unitName": "g"
+          },
+          "amount": 0.8
+        }
+      ],
+      "foodPortions": [
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "cup"
+          },
+          "modifier": "pieces of ~1\"",
+          "gramWeight": 20.6,
+          "sequenceNumber": 1
+        },
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "RACC"
+          },
+          "gramWeight": 85,
+          "sequenceNumber": 1
+        }
+      ]
+    },
+    {
+      "fdcId": 1750340,
+      "description": "Apples, fuji, with skin, raw",
+      "dataType": "Foundation",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 1.01
+        },
+        {
+          "nutrient": {
+            "number": "269",
+            "name": "Total Sugars",
+            "unitName": "g"
+          },
+          "amount": 13.3
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 0.162
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 2.08
+        },
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 0.148
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 15.7
+        },
+        {
+          "nutrient": {
+            "number": "957",
+            "name": "Energy (Atwater General Factors)",
+            "unitName": "kcal"
+          },
+          "amount": 64.7
+        },
+        {
+          "nutrient": {
+            "number": "958",
+            "name": "Energy (Atwater Specific Factors)",
+            "unitName": "kcal"
+          },
+          "amount": 58.2
+        },
+        {
+          "nutrient": {
+            "number": "205.2",
+            "name": "Carbohydrate, by summation",
+            "unitName": "g"
+          },
+          "amount": 15.4
+        },
+        {
+          "nutrient": {
+            "number": "269.3",
+            "name": "Sugars, Total",
+            "unitName": "g"
+          },
+          "amount": 13.3
+        }
+      ],
+      "foodPortions": [
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "RACC"
+          },
+          "gramWeight": 140,
+          "sequenceNumber": 1
+        }
+      ]
+    },
+    {
+      "fdcId": 2747653,
+      "description": "Beet greens, raw",
+      "dataType": "Foundation",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 280
+        },
+        {
+          "nutrient": {
+            "number": "269.3",
+            "name": "Sugars, Total",
+            "unitName": "g"
+          },
+          "amount": 0.89
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 0.144
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 2.58
+        },
+        {
+          "nutrient": {
+            "number": "957",
+            "name": "Energy (Atwater General Factors)",
+            "unitName": "kcal"
+          },
+          "amount": 26.4
+        },
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 1.61
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 4.66
+        }
+      ],
+      "foodPortions": []
+    },
+    {
+      "fdcId": 746775,
+      "description": "Salt, table, iodized",
+      "dataType": "Foundation",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 38700
+        }
+      ],
+      "foodPortions": [
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "teaspoon"
+          },
+          "modifier": "",
+          "gramWeight": 6.1,
+          "sequenceNumber": 1
+        }
+      ]
+    },
+    null
+  ],
+  "SRLegacyFoods": [
+    {
+      "fdcId": 168878,
+      "description": "Rice, white, long-grain, regular, enriched, cooked",
+      "dataType": "SR Legacy",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "268",
+            "name": "Energy",
+            "unitName": "kJ"
+          },
+          "amount": 544
+        },
+        {
+          "nutrient": {
+            "number": "269",
+            "name": "Total Sugars",
+            "unitName": "g"
+          },
+          "amount": 0.05
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 0.4
+        },
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 1
+        },
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 2.69
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 0.28
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 28.2
+        },
+        {
+          "nutrient": {
+            "number": "208",
+            "name": "Energy",
+            "unitName": "kcal"
+          },
+          "amount": 130
+        }
+      ],
+      "foodPortions": [
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "cup",
+          "gramWeight": 158,
+          "sequenceNumber": 1
+        }
+      ]
+    },
+    {
+      "fdcId": 171477,
+      "description": "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
+      "dataType": "SR Legacy",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "268",
+            "name": "Energy",
+            "unitName": "kJ"
+          },
+          "amount": 690
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 3.57
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "208",
+            "name": "Energy",
+            "unitName": "kcal"
+          },
+          "amount": 165
+        },
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 31
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 74
+        },
+        {
+          "nutrient": {
+            "number": "269",
+            "name": "Total Sugars",
+            "unitName": "g"
+          },
+          "amount": 0
+        }
+      ],
+      "foodPortions": [
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "cup, chopped or diced",
+          "gramWeight": 140,
+          "sequenceNumber": 1
+        },
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "unit (yield from 1 lb ready-to-cook chicken)",
+          "gramWeight": 52,
+          "sequenceNumber": 2
+        },
+        {
+          "amount": 0.5,
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "breast, bone and skin removed",
+          "gramWeight": 86,
+          "sequenceNumber": 3
+        }
+      ]
+    },
+    {
+      "fdcId": 168240,
+      "description": "Pork, fresh, loin, center loin (chops), bone-in, separable lean only, cooked, broiled",
+      "dataType": "SR Legacy",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 26.8
+        },
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 56
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 7.29
+        },
+        {
+          "nutrient": {
+            "number": "269",
+            "name": "Total Sugars",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "208",
+            "name": "Energy",
+            "unitName": "kcal"
+          },
+          "amount": 180
+        },
+        {
+          "nutrient": {
+            "number": "268",
+            "name": "Energy",
+            "unitName": "kJ"
+          },
+          "amount": 753
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 0
+        }
+      ],
+      "foodPortions": [
+        {
+          "amount": 1,
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "chop without refuse (Yield from 1 cooked chop, with refuse, weighing 209g)",
+          "gramWeight": 146,
+          "sequenceNumber": 1
+        },
+        {
+          "amount": 3,
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "oz",
+          "gramWeight": 85,
+          "sequenceNumber": 2
+        }
+      ]
+    }
+  ],
+  "SurveyFoods": [
+    {
+      "fdcId": 2705388,
+      "description": "Milk, fat free (skim)",
+      "dataType": "Survey (FNDDS)",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 3.43
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 0.08
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 4.92
+        },
+        {
+          "nutrient": {
+            "number": "208",
+            "name": "Energy",
+            "unitName": "kcal"
+          },
+          "amount": 34
+        },
+        {
+          "nutrient": {
+            "number": "269",
+            "name": "Total Sugars",
+            "unitName": "g"
+          },
+          "amount": 5.05
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 41
+        }
+      ],
+      "foodPortions": [
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "30000",
+          "portionDescription": "1 fl oz",
+          "gramWeight": 30.5,
+          "sequenceNumber": 2
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "10205",
+          "portionDescription": "1 cup",
+          "gramWeight": 244,
+          "sequenceNumber": 1
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "90000",
+          "portionDescription": "Quantity not specified",
+          "gramWeight": 244,
+          "sequenceNumber": 6
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "63546",
+          "portionDescription": "Guideline amount per cup of hot cereal",
+          "gramWeight": 61,
+          "sequenceNumber": 5
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "63480",
+          "portionDescription": "Guideline amount per fl oz of beverage",
+          "gramWeight": 2.5,
+          "sequenceNumber": 4
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "64294",
+          "portionDescription": "1 individual school container",
+          "gramWeight": 244,
+          "sequenceNumber": 3
+        }
+      ]
+    },
+    {
+      "fdcId": 2705958,
+      "description": "Chicken breast, baked or broiled, skin not eaten, from pre-cooked",
+      "dataType": "Survey (FNDDS)",
+      "foodNutrients": [
+        {
+          "nutrient": {
+            "number": "203",
+            "name": "Protein",
+            "unitName": "g"
+          },
+          "amount": 28
+        },
+        {
+          "nutrient": {
+            "number": "204",
+            "name": "Total lipid (fat)",
+            "unitName": "g"
+          },
+          "amount": 3.57
+        },
+        {
+          "nutrient": {
+            "number": "205",
+            "name": "Carbohydrate, by difference",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "208",
+            "name": "Energy",
+            "unitName": "kcal"
+          },
+          "amount": 144
+        },
+        {
+          "nutrient": {
+            "number": "269",
+            "name": "Total Sugars",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "291",
+            "name": "Fiber, total dietary",
+            "unitName": "g"
+          },
+          "amount": 0
+        },
+        {
+          "nutrient": {
+            "number": "307",
+            "name": "Sodium, Na",
+            "unitName": "mg"
+          },
+          "amount": 328
+        }
+      ],
+      "foodPortions": [
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "60453",
+          "portionDescription": "1 breast quarter (yield after cooking, bone removed)",
+          "gramWeight": 155,
+          "sequenceNumber": 9
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "90000",
+          "portionDescription": "Quantity not specified",
+          "gramWeight": 120,
+          "sequenceNumber": 10
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "40040",
+          "portionDescription": "1 oz, cooked",
+          "gramWeight": 28.35,
+          "sequenceNumber": 8
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "61398",
+          "portionDescription": "1 medium slice",
+          "gramWeight": 60,
+          "sequenceNumber": 6
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "62138",
+          "portionDescription": "1 small or thin slice",
+          "gramWeight": 30,
+          "sequenceNumber": 5
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "61039",
+          "portionDescription": "1 large or thick slice",
+          "gramWeight": 85,
+          "sequenceNumber": 7
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "64700",
+          "portionDescription": "1 large breast",
+          "gramWeight": 135,
+          "sequenceNumber": 4
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "64699",
+          "portionDescription": "1 medium breast",
+          "gramWeight": 120,
+          "sequenceNumber": 3
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "10049",
+          "portionDescription": "1 cup, cooked, diced",
+          "gramWeight": 135,
+          "sequenceNumber": 1
+        },
+        {
+          "measureUnit": {
+            "name": "undetermined"
+          },
+          "modifier": "64698",
+          "portionDescription": "1 small breast",
+          "gramWeight": 105,
+          "sequenceNumber": 2
+        }
+      ]
+    }
+  ]
+}

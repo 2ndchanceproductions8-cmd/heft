@@ -84,6 +84,7 @@ export function MealDoneView({ meal }: { meal: Meal }) {
         barcode: c.barcode,
         source: c.source,
         lookup: 'ok',
+        bundled: c.bundled,
       },
       true,
     );

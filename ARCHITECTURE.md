@@ -23,7 +23,8 @@ Run: `npm run dev` (port 5180). Typecheck: `npx tsc --noEmit`. Tests: `npx vites
 6. Every exercise shows **pictures** like Hevy (start/end frames that cross-fade = animation; or his own
    photo of the actual machine).
 7. A **Food tab** (port of his older SnapPlate app): photograph or describe a meal, Claude names the foods and
-   estimates grams, USDA supplies the numbers; barcodes read the label via Open Food Facts. See "Food tab".
+   estimates grams, USDA supplies the numbers (whole foods from a bundled offline copy of USDA, so they work with no
+   connection); barcodes read the label via Open Food Facts. See "Food tab".
 
 ## Data model — `src/types.ts` (read it)
 - **Weights are ALWAYS stored in kg, distances in meters, durations in seconds, timestamps in epoch ms.**
@@ -211,7 +212,9 @@ backups. The private `heft-inbox` repo and the owner's fine-grained token are ou
 ## Food tab (nutrition)
 A port of SnapPlate. Log a meal by **photo or description** (Claude names the foods and estimates grams, USDA
 FoodData Central supplies the numbers), by **barcode** (Open Food Facts reads the label), by **search** (USDA +
-your recent foods) or by **quick add** (just calories, macros optional). The engine is `src/lib/nutrition/*`
+your recent foods) or by **quick add** (just calories, macros optional). USDA's whole foods (Foundation, SR Legacy,
+Survey (FNDDS); 13,545 foods) are **bundled for offline use**, MacroFactor-style: search and photo grounding read
+that index first and call the live API only when it has no good match (see "Offline food index"). The engine is `src/lib/nutrition/*`
 (node-testable, I/O behind injectable deps); the screens are `src/features/nutrition/*`.
 
 ### Data model (`lib/nutrition/types.ts`, Dexie v2)
@@ -231,7 +234,9 @@ your recent foods) or by **quick add** (just calories, macros optional). The eng
 - `MealItem`: nutrients = `per100g × grams/100 × serves` (per100g is the source of truth; grams per serving are
   user-editable, `baselineGrams` drives Reset). Quick-add items carry `fixed` totals instead (not scaled by
   grams). `source` = `usda` | `off` | `estimate` | `manual`; `name` is never overwritten by a match
-  (`matchedName` holds the database description); `lookup` records the per-item database outcome.
+  (`matchedName` holds the database description); `lookup` records the per-item database outcome. `bundled: true`
+  = the USDA numbers came from the offline index rather than the live API (same USDA rows, same `fdcId`; still
+  `source: 'usda'`, so confidence and the "Est." label treat it as a database value).
 - `foods` (id `usda:<fdcId>` | `off:<barcode>` | `custom:<uid>`; indexes `barcode`, `lastUsedAt`): recents for
   search and the offline barcode cache.
 - `nutrition` (one row, id `profile`): activity, goal, pace, kcal / protein overrides, `setupDoneAt`. Body inputs
@@ -246,7 +251,8 @@ your recent foods) or by **quick add** (just calories, macros optional). The eng
 
 ### Accuracy architecture (non-negotiable)
 - **Claude does recognition + portion only**: per item a name, a USDA search phrase (`fdcQuery`), a portion and
-  grams. `ground.ts` looks every phrase up in USDA (`bestMatch`) and the per-100 g numbers come from there.
+  grams. `ground.ts` looks every phrase up in USDA (`bestMatch`: the offline index first, then the live API) and
+  the per-100 g numbers come from there.
 - **Barcodes**: the numbers are the manufacturer's label via Open Food Facts (`off.ts`); the product is cached in
   `foods`, so a second scan works offline.
 - **Claude's own nutrient figures are a labelled fallback**: an item USDA can't match keeps Claude's estimate
@@ -337,6 +343,34 @@ Import re-derives each meal's `day` / `totals`. **Restoring a version-1 file (ma
 the workout side only and keeps this device's food log** (meals, foods, targets and the photos those meals use);
 `keepsFoodLog(file)` decides it, and Settings' import confirmation and toast say so. Keys are never in a backup.
 
+### Offline food index (`fdcData.ts`, `foodIndex.ts`, `usda.ts searchLocal`)
+- **Data:** `public/food-index.<hash>.json`, built by `node scripts/build-food-index.mjs [cache dir]` from USDA's
+  bulk JSON downloads (public domain, `THIRD_PARTY_NOTICES.md`): the newest Foundation, SR Legacy (frozen 2018-04)
+  and Survey (FNDDS) zips on fdc.nal.usda.gov/download-datasets. Per food: fdcId, USDA description, data type, per
+  100 g kcal / protein / carbs / fat / fiber / sugar / sodium, and up to 6 household measures (`portions`). One
+  compact row per food (`encodeFoodRow`, `FOOD_INDEX_VERSION`); ~1.85 MB raw, ~400 kB gzipped. The script writes
+  the GENERATED pointer `lib/nutrition/foodIndexMeta.ts` (file name, food count, releases; never hand-edit) and
+  deletes older index files. Both outputs are committed; re-run only for a new USDA release.
+- **Same rules as the API:** `fdcData.ts` holds `extractPer100g` (energy 208 → 958 → 957, carbs 205 → 205.2, sugar
+  269 → 269.3) and the bulk parser (`foodFromBulk`, `portionLabel`). It has no value imports, so Node runs the build
+  script straight against it (type stripping); `usda.ts` re-exports `NUTRIENT` / `extractPer100g`.
+- **Loading:** `loadFoodIndex()` fetches the file once (shared promise; a failure resolves null and is retried next
+  call). The service worker keeps it in the `food-index` runtime cache (CacheFirst: the hashed name can't go
+  stale; not precached). The Diary warms it 1.5 s after opening and the search sheet on open, so the phone has it
+  before it goes offline.
+- **Search** (`searchLocal`): every query word (`tokens()`, no stopwords) must be found in the food's name, by a
+  plural-insensitive stem (`matchStem`; never a negated word: "no cheese", "skin not eaten"), else through a
+  cooking-method class ("grilled" ~ broiled / roasted / baked, "steamed" ~ boiled / cooked), else (search-as-you-type
+  only) the last word as a prefix. Ranking = `scoreCandidate` on the query respelled with the food's own words (the
+  processed / specialty / raw-vs-cooked rules of API rows) + head-noun bonus + word-order bonus − unasked-for brand
+  row (`brandWords`) − a processed word only the prefix filled in − class match. All words found = a GOOD match.
+- **Fallback order:** `bestMatch` (grounding) = the index's GOOD match (no request, `demoKey: false`), else the live
+  API as before; a partial match never grounds an item. `findFoods` (search sheet) = GOOD index matches, else the
+  live API (after the 350 ms typing pause), else, when the API can't answer, the index's partial matches with the
+  API's status (`apiStatus`: "Couldn't reach USDA — closest matches from the offline database"). Under index
+  results, "Not here? Search USDA online" asks the API (brands, foods the index lacks). Barcodes stay on Open Food
+  Facts. A recent food gets its measures back from the loaded index by fdcId (`portionsFor`).
+
 ### Bundle and offline
 `@anthropic-ai/sdk` is imported dynamically inside `foodAi.ts` (its own chunk). The barcode ponyfill and the
 zxing wasm are imported dynamically in `barcode.ts`; the wasm is self-hosted via `?url` (`zxing-wasm` is a direct
@@ -347,13 +381,16 @@ is used instead when the browser has one.
 ### `lib/nutrition` modules
 | Module | Exports |
 |---|---|
-| `types.ts` | `Meal`, `MealItem`, `MealInput`, `MealStatus`, `AiCall`, `Food`, `FoodChoice`, `Per100g`, `Totals`, `NutritionProfile`, `Body`, `Targets`, `Confidence`, `NutrientSource`, `LookupStatus`, `Activity`, `Goal`, `Pace` |
+| `types.ts` | `Meal`, `MealItem`, `MealInput`, `MealStatus`, `AiCall`, `Food`, `FoodChoice` (`portions`, `bundled`), `FoodPortion`, `Per100g`, `Totals`, `NutritionProfile`, `Body`, `Targets`, `Confidence`, `NutrientSource`, `LookupStatus`, `Activity`, `Goal`, `Pace` |
 | `math.ts` | pure: `emptyTotals`, `scalePer100g`, `addTotals`, `multiplyTotals`, `clampServes`, `MAX_SERVES`, `itemServing`, `itemNutrients`, `mealTotals`, `recomputeMeal`, `countsTowardDay`, `sumMeals`, `remaining(target, eaten)`, `per100gFromEstimate`, `dayKey`, `dayStart`, `shiftDay`, `atForDay(day, now)`, `kcal`, `macroG` |
 | `targets.ts` | `computeTargets(profile, body)`, `bmr`, `tdee`, `calorieAdjustment(goal, pace, recomp?)`, `isRecomp`, `RECOMP_OFFSET`, `bodyFromSettings(settings, kg, now)` (body, or the `missing` fields), `DEFAULT_NUTRITION`, `ACTIVITY_FACTOR` / `ACTIVITY_LABEL` / `ACTIVITY_SUBTITLE`, `GOAL_LABEL`, `PACE_LABEL`, `BODY_FIELD_LABEL`, `KG_PER_LB` |
 | `store.ts` | meals: `createMeal`, `updateMeal(id, patch \| fn, {force})`, `setMealStatus`, `deleteMeal` (and its photos), `addItem`, `updateItem`, `removeItem`, `newItemId`, `itemFromChoice(choice, grams, name?)`, `MealBusyError`; hooks (undefined while loading): `useDayMeals`, `useMeal` (null = missing), `useDayTotals`, `useUnfinishedMeals`, `useAiSpend(since)` / `loadAiSpend` / `recordSpend` (the ledger), `useTargets` / `loadTargets`, `useNutritionProfile` / `getNutritionProfile` / `updateNutritionProfile`; foods: `upsertFood`, `useRecentFoods`, `foodByBarcode`, `foodFromChoice`, `choiceFromFood`; `todayKey` |
 | `keys.ts` | `getAnthropicKey` / `setAnthropicKey`, `getFdcKey` / `setFdcKey`, `fdcKeyOrDemo`, `FDC_DEMO_KEY`, `isAnthropicSecret`, `clearNutritionKeys`, `maskKey`, `looksLikeAnthropicKey`, `useNutritionKeys()` |
 | `burn.ts` | display-only: `useDayBurn(day)`, `loadDayBurn`, `sumActiveKcal` |
-| `usda.ts` | `searchFoods(query, {pageSize, signal})` → `{status: ok/rate_limited/failed, foods, demoKey}`, `bestMatch(query, signal)`, ranking (`rankFoods`, `scoreCandidate`, `tokens`), `extractPer100g`, `choiceFromFdc`, `timeoutSignal`, `NUTRIENT`, `FDC_DATA_TYPES`, `resetUsdaDataTypeMemo` (tests) |
+| `usda.ts` | `searchFoods(query, {pageSize, signal})` (live API) → `{status: ok/rate_limited/failed, foods, demoKey}`, `bestMatch(query, signal, {localIndex})` (index first), `findFoods(query, {online, liveDelayMs, onLive})` → `FindResult` (`from` bundled/api, `apiStatus`), `searchLocal(index, query, {prefix, limit})` → `{foods, good}`, `choiceFromIndex`, ranking (`rankFoods`, `scoreCandidate`, `tokens`), `choiceFromFdc`, `timeoutSignal`, `FDC_DATA_TYPES`, `resetUsdaDataTypeMemo` (tests); re-exports `NUTRIENT`, `extractPer100g` |
+| `fdcData.ts` | dependency-free (the build script imports it): `NUTRIENT`, `extractPer100g`, bulk parsing (`foodFromBulk`, `portionsFromBulk`, `portionLabel`, `MAX_PORTIONS`), the index file (`encodeFoodIndex`, `encodeFoodRow`, `decodeFoodIndex`, `decodeFoodRow`, `FOOD_INDEX_VERSION`, `INDEX_DATA_TYPES`), types `IndexFood`, `FoodIndexFile`, `FoodIndexSource` |
+| `foodIndex.ts` | `loadFoodIndex()` → `FoodIndex \| null`, `loadedFoodIndex()`, `warmFoodIndex()`, `portionsFor(fdcId)`, `prepareFoods`, word matching (`indexWords`, `matchStem`, `matchStems`, `brandWords`), `resetFoodIndex` (tests) |
+| `foodIndexMeta.ts` | GENERATED by `scripts/build-food-index.mjs`: `FOOD_INDEX_FILE`, `FOOD_INDEX_FOODS`, `FOOD_INDEX_SOURCES` |
 | `off.ts` | `lookupBarcode(code, signal)` → `{status: ok/not_found/unavailable, food}` (`not_found` only when OFF says so), `choiceFromOff`, `offPer100g`, `offServingG` |
 | `barcode.ts` | `normalizeBarcode(raw, format?)` (EAN-13 / EAN-8 / UPC-A / UPC-E with check digit), `expandUpcE`, `gs1CheckDigit`, `decodeBarcodeFromImage(blob)` (null = none found; throws only if the reader can't load) |
 | `photos.ts` | `saveMealPhoto(file)` (≤ 2048 px JPEG, stepped down to fit 5 MB; `PhotoError` for undecodable files), `shrinkMealPhotos(ids)` (keep one ≤ 640 px), `finishMealPhotos(mealId)` (the shrink path for every finished photo meal; never throws) |
@@ -361,7 +398,7 @@ is used instead when the browser has one.
 | `prompt.ts` | `buildPrompt({imageCount, description, weightG})` (multi-angle, scale reference and user-context rules) |
 | `schema.ts` | `MEAL_SCHEMA` (structured output), `parseMealOutput` (validate + clamp; `MealOutputError`), `clampWeightG` |
 | `foodAi.ts` | `analyzeMeal(input, deps)` → `AnalyzeResult` (items, confidence, scaleReference, notes, billed `calls`) or throws `AiError` with a `code`; `testApiKey(key)` (spends no tokens); pricing `PRICES`, `priceFor`, `costUsd`, `billedCall`; `AI_MODEL` |
-| `ground.ts` | `groundItems(aiItems, opts)` → meal items with USDA numbers or labelled estimates (4 at a time, 6 s per item) |
+| `ground.ts` | `groundItems(aiItems, opts)` → meal items with USDA numbers (`bundled` when from the index) or labelled estimates (4 at a time, 6 s per item) |
 | `confidence.ts` | `finalConfidence({model, items, hasUserWeight, hasScaleRef})`, `allItemsMatched` |
 | `analyze.ts` | `runAnalysis(mealId)`, `aiErrorMessage`, `titleFromItems`, `NO_KEY_MESSAGE`; re-exports the run registry below |
 | `running.ts` | the dependency-free run registry: `isAnalysisRunning`, `analysisInterrupted(meal)`, `useAnalysisRunning(id)`, `subscribeRunning` (Today reads it without loading the analysis pipeline) |
@@ -369,7 +406,8 @@ is used instead when the browser has one.
 Feature-side shared pieces: `features/nutrition/ui.tsx` (`Ring`, `MacroBar`, `MacroLine`, `SourceChip`,
 `ConfidenceBadge`, `formatKcal`, `useMassUnit`, and `GramsSheet`, the one gram-entry sheet) and
 `FoodSearchSheet.tsx` (`<FoodSearchSheet open onClose mode="add" | "change" initialQuery? title? onPick={(choice,
-grams | null) => …} />`; `add` asks for grams, `change` returns the food at once).
+grams | null) => …} />`; `add` asks for grams with the food's household measures as one-tap amounts, `change`
+returns the food at once; results come from `findFoods`, instant while the index is in memory).
 
 ## Today dashboard (`/today`, `features/today/*`)
 The owner runs Heft, its Food tab (the old SnapPlate) and a bathroom scale (read and typed in) as one ecosystem; Today puts

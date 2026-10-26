@@ -64,6 +64,18 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
+          {
+            // The Food tab's offline USDA index (~400 kB gzipped, lib/nutrition/foodIndex.ts), cached on first use.
+            // Its name carries a content hash (scripts/build-food-index.mjs), so CacheFirst never serves a stale
+            // copy; keep 2 so the running page still has its own while a new version installs.
+            urlPattern: ({ url }) => /\/food-index\.[0-9a-f]+\.json$/.test(url.pathname),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'food-index',
+              expiration: { maxEntries: 2 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
         ],
       },
       devOptions: { enabled: false },

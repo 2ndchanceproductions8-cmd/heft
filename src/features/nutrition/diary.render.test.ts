@@ -6,6 +6,7 @@ import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
+import { FOOD_INDEX_FOODS } from '../../lib/nutrition/foodIndexMeta';
 import { atForDay, emptyTotals, recomputeMeal } from '../../lib/nutrition/math';
 import { createMeal } from '../../lib/nutrition/store';
 import { computeTargets } from '../../lib/nutrition/targets';
@@ -350,7 +351,11 @@ describe('Food settings renders', () => {
     expect(html).toContain('type="password"');
     expect(html.toLowerCase()).toContain('autocomplete="off"');
     expect(html.toLowerCase()).toContain('spellcheck="false"');
-    expect(html).toContain('Nutrition data: USDA FoodData Central (public domain) · Open Food Facts (ODbL).');
+    // the attribution names the bundled offline index (its size and releases come from foodIndexMeta.ts)
+    expect(html).toContain(
+      `Nutrition data: USDA FoodData Central (public domain; ${FOOD_INDEX_FOODS.toLocaleString()} whole foods built in for offline use: Foundation `,
+    );
+    expect(html).toContain('FNDDS 2024-10-31) · Open Food Facts (ODbL).');
     expect(html).not.toContain('Saved key');
   });
 

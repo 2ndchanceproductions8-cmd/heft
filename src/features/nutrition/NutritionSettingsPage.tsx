@@ -2,6 +2,7 @@ import { useLocation } from 'react-router-dom';
 import { startOfMonth } from 'date-fns';
 import { Loading, Page, SectionHeader, TopBar } from '../../components/ui';
 import { useWakeNow } from '../../lib/useWakeNow';
+import { FOOD_INDEX_FOODS, FOOD_INDEX_SOURCES } from '../../lib/nutrition/foodIndexMeta';
 import { useNutritionKeys } from '../../lib/nutrition/keys';
 import { useAiSpend } from '../../lib/nutrition/store';
 import { bodyFromSettings, computeTargets } from '../../lib/nutrition/targets';
@@ -66,7 +67,9 @@ function SettingsScreen({ back }: { back: string | boolean }) {
       <UsdaKeySection saved={keys.fdc} />
 
       <p className="px-6 pt-6 text-center text-[12px] leading-snug text-faint">
-        Nutrition data: USDA FoodData Central (public domain) · Open Food Facts (ODbL).
+        Nutrition data: USDA FoodData Central (public domain; {FOOD_INDEX_FOODS.toLocaleString()} whole foods built in
+        for offline use: {FOOD_INDEX_SOURCES.map((s) => `${s.dataType.replace('Survey (FNDDS)', 'FNDDS')} ${s.release}`).join(', ')})
+        · Open Food Facts (ODbL).
       </p>
     </Page>
   );

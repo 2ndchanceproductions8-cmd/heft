@@ -34,3 +34,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## USDA FoodData Central (the Food tab's offline food index)
+
+`public/food-index.<hash>.json` is built by `scripts/build-food-index.mjs` from the bulk downloads of **USDA
+FoodData Central** (https://fdc.nal.usda.gov/download-datasets): Foundation Foods, SR Legacy and the Food and
+Nutrient Database for Dietary Studies (Survey / FNDDS). The release dates in use are in
+`src/lib/nutrition/foodIndexMeta.ts`.
+
+FoodData Central data is in the public domain (CC0 1.0 Universal); no permission is needed to use it. Suggested
+citation: U.S. Department of Agriculture, Agricultural Research Service. FoodData Central. fdc.nal.usda.gov.
+
+What Heft changed: only whole foods are kept (no Branded Foods); each food keeps its fdcId, description, data type,
+per-100 g energy, protein, carbohydrate, fat, fiber, sugars and sodium (values rounded to 1–2 decimals) and up to 6
+household portions with reworded labels; all other nutrients and fields are dropped.

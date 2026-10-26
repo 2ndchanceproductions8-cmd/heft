@@ -1,11 +1,18 @@
+import { extractPer100g, type FdcNutrient } from './fdcData';
+import { indexWords, loadFoodIndex, matchStem, type FoodIndex, type FoodIndexLoader, type PreparedFood } from './foodIndex';
 import { FDC_DEMO_KEY, fdcKeyOrDemo } from './keys';
-import type { FoodChoice, LookupStatus, Per100g } from './types';
+import type { FoodChoice, LookupStatus } from './types';
 
 /*
  * USDA FoodData Central grounding (ported from SnapPlate app/lib/usda.ts).
  *
  * Claude identifies the food and estimates its weight; this module supplies the NUMBERS from USDA, so
  * calories/macros never come from the model's memory. That split is the single biggest accuracy win.
+ *
+ * Local first: whole foods (Foundation, SR Legacy, FNDDS) are answered from the bundled offline index
+ * (foodIndex.ts; searchLocal below, ranked by the same scoreCandidate as API rows). bestMatch and findFoods ask the
+ * live API only when the index has no GOOD match (every word of the query found in one food) or can't load. The
+ * API's numbers and the index's are the same USDA rows (same fdcId); a choice from the index carries `bundled`.
  *
  * Browser rules: GET only, the query built with URLSearchParams, NO custom headers (a simple request needs no
  * CORS preflight). The key is the user's own FDC key or the public DEMO_KEY (keys.ts) and is never logged.
@@ -31,6 +38,9 @@ import type { FoodChoice, LookupStatus, Per100g } from './types';
  * and never reported as a connection problem.
  */
 
+// The nutrient-number rules live in fdcData.ts (shared with the offline index's build script).
+export { NUTRIENT, extractPer100g, type FdcNutrient } from './fdcData';
+
 const FDC_SEARCH_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
 /** SnapPlate's filter: whole-food data types only (no Branded). */
 export const FDC_DATA_TYPES = 'Foundation,SR Legacy,Survey (FNDDS)';
@@ -39,26 +49,6 @@ export const USDA_TIMEOUT_MS = 8000;
 const DEFAULT_PAGE_SIZE = 12;
 /** The unfiltered request may return Branded rows; ask for a few more so whole foods still make the page. */
 const UNFILTERED_PAGE_SIZE = 20;
-
-/**
- * Standard USDA nutrient numbers (values are per 100 g for Foundation / SR Legacy / FNDDS / Branded).
- * Foundation rows often lack 208 / 269 / 205 and list their own numbers for the same quantities instead.
- */
-export const NUTRIENT = {
-  energy: '208', // Energy (kcal)
-  // Foundation: food-SPECIFIC Atwater factors match SR Legacy's 208 convention; the GENERAL 4-9-4 factors run
-  // ~10% high for fruit and vegetables (Fuji apple: 957 = 64.7 vs 958 = 58.2 kcal), so 957 is the last resort.
-  energyAtwaterSpecific: '958', // Energy (Atwater Specific Factors), kcal
-  energyAtwaterGeneral: '957', // Energy (Atwater General Factors), kcal
-  protein: '203',
-  fat: '204',
-  carbs: '205', // Carbohydrate, by difference
-  carbsBySummation: '205.2', // Carbohydrates, by summation (Foundation)
-  fiber: '291', // Fiber, total dietary
-  sugar: '269', // Sugars, total
-  sugarTotal: '269.3', // Sugars, Total (Foundation's number for the same thing, e.g. "Beets, raw")
-  sodium: '307', // Sodium, Na (mg)
-} as const;
 
 /** 'key_rejected' = USDA answered 401/403: the saved USDA key is wrong (or disabled). */
 export type UsdaStatus = 'ok' | 'rate_limited' | 'failed' | 'key_rejected';
@@ -70,14 +60,7 @@ export interface UsdaSearchResult {
   demoKey: boolean;
 }
 
-/** Raw shapes from the FDC search response (only the fields we read). */
-export interface FdcNutrient {
-  nutrientNumber?: string | number;
-  nutrientName?: string;
-  unitName?: string;
-  value?: number;
-}
-
+/** Raw shape of an FDC search row (only the fields we read). */
 export interface FdcFood {
   fdcId?: number;
   description?: string;
@@ -99,6 +82,9 @@ const DATATYPE_PRIORITY: Record<string, number> = {
 };
 /** Only reachable through the unfiltered fallback request: a label product is a last resort for a photo. */
 const BRANDED_PENALTY = 0.8;
+/** Per processed / specialty word in a candidate that the query didn't ask for (the marker sets below). */
+const PROCESSED_PENALTY = 0.6;
+const SPECIALTY_PENALTY = 0.4;
 
 const STOPWORDS = new Set(['and', 'with', 'the', 'a', 'of', 'in', 'raw', 'fresh']);
 
@@ -149,6 +135,14 @@ const SPECIALTY_MARKERS = new Set([
   'diet',
   'fortified',
   'skin', // "chicken breast" means the meat; Claude says "with skin" when it sees skin
+  'meatless', // "Chicken, meatless" is a soy product
+  // concentrated forms: "orange juice" is not the frozen concentrate (148 kcal vs 47), "milk" not evaporated
+  'concentrate',
+  'evaporated',
+  'condensed',
+  'dried',
+  'powder',
+  'powdered',
 ]);
 
 const COOKED_WORDS = new Set([
@@ -182,7 +176,8 @@ function allTokens(s: string): string[] {
 
 /** Lowercase search tokens without stopwords (exported for tests). */
 export function tokens(s: string): string[] {
-  return allTokens(s).filter((t) => t.length > 1 && !STOPWORDS.has(t));
+  // A single digit is kept: "milk, 2%" must not search for just "milk".
+  return allTokens(s).filter((t) => (t.length > 1 || /\d/.test(t)) && !STOPWORDS.has(t));
 }
 
 /**
@@ -222,8 +217,8 @@ export function scoreCandidate(query: string, food: Pick<FdcFood, 'description' 
     dtBonus +
     rankBonus * 0.5 -
     extra * 0.08 -
-    processed * 0.6 -
-    specialty * 0.4 -
+    processed * PROCESSED_PENALTY -
+    specialty * SPECIALTY_PENALTY -
     stateMismatch * 0.5 -
     branded
   );
@@ -232,32 +227,6 @@ export function scoreCandidate(query: string, food: Pick<FdcFood, 'description' 
 // ------------------------------------------------------------------ nutrients
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-
-/**
- * Per-100 g nutrients from an FDC nutrient list. Energy: 208, else 958 (Atwater specific), else 957 (Atwater
- * general), else null (the row is unusable). Carbs: 205, else 205.2; sugar: 269, else 269.3. Fiber / sugar /
- * sodium that aren't listed are null (unknown), never 0. Negative values (USDA's "carbohydrate by difference"
- * can be slightly negative) are clamped to 0.
- */
-export function extractPer100g(nutrients: FdcNutrient[]): Per100g | null {
-  const byNumber = new Map<string, number>();
-  for (const n of nutrients) {
-    const num = n.nutrientNumber == null ? '' : String(n.nutrientNumber);
-    if (num && finite(n.value) && !byNumber.has(num)) byNumber.set(num, n.value);
-  }
-  const get = (num: string): number | null => (byNumber.has(num) ? Math.max(0, byNumber.get(num)!) : null);
-  const energy = get(NUTRIENT.energy) ?? get(NUTRIENT.energyAtwaterSpecific) ?? get(NUTRIENT.energyAtwaterGeneral);
-  if (energy == null) return null;
-  return {
-    kcal: energy,
-    proteinG: get(NUTRIENT.protein) ?? 0,
-    carbsG: get(NUTRIENT.carbs) ?? get(NUTRIENT.carbsBySummation) ?? 0,
-    fatG: get(NUTRIENT.fat) ?? 0,
-    fiberG: get(NUTRIENT.fiber),
-    sugarG: get(NUTRIENT.sugar) ?? get(NUTRIENT.sugarTotal),
-    sodiumMg: get(NUTRIENT.sodium),
-  };
-}
 
 /** "CHICKEN BREAST, GRILLED" → "Chicken Breast, Grilled" (Branded descriptions are all caps). */
 function tidyName(s: string): string {
@@ -303,6 +272,129 @@ export function rankFoods(query: string, foods: FdcFood[]): FoodChoice[] {
     }
   }
   return out;
+}
+
+// ------------------------------------------------------------------ the bundled index (offline)
+
+/** Ranking bonus for a food whose head noun (USDA's words before the first comma) the query covers entirely. */
+const HEAD_BONUS = 0.5;
+/** A chain-restaurant / brand row ("DENNY'S, french fries") the query didn't name. */
+const BRAND_PENALTY = 0.5;
+/** A query word found only through its cooking-method class ("grilled" ~ "roasted"): below the exact word. */
+const COOK_CLASS_PENALTY = 0.3;
+/** The query's words appear in the food's name in the query's order ("spaghetti with meat sauce"). */
+const ORDER_BONUS = 0.2;
+const LOCAL_LIMIT = 25;
+
+/**
+ * Cooking words USDA uses for the same food prepared without added fat (FNDDS even groups "baked, broiled, or
+ * roasted"): Claude's "chicken breast, grilled" or "broccoli, steamed" then still has a good local match.
+ */
+const COOK_CLASS = new Map<string, number>(
+  [
+    ['steamed', 'boiled', 'cooked', 'poached', 'simmered'],
+    ['grilled', 'broiled', 'roasted', 'baked'],
+  ].flatMap((words, i) => words.map((w) => [w, i] as [string, number])),
+);
+
+export interface LocalSearch {
+  /** Best first. Only GOOD matches when there are any, else the closest partial ones (half the words or more). */
+  foods: FoodChoice[];
+  /** Every word of the query was found in the first food: trust it instead of asking the live API. */
+  good: boolean;
+}
+
+/** A bundled food as a FoodChoice (same id scheme as an API row, so recents don't duplicate it). */
+export function choiceFromIndex(f: PreparedFood): FoodChoice {
+  return {
+    id: `usda:${f.fdcId}`,
+    name: f.name,
+    source: 'usda',
+    fdcId: f.fdcId,
+    per100g: f.per100g,
+    servingG: null,
+    dataType: f.dataType,
+    portions: f.portions,
+    bundled: true,
+  };
+}
+
+/**
+ * Search the bundled index. Every word of the query (tokens(): no stopwords, so "raw" doesn't have to appear) is
+ * looked up in each food's name: by plural-insensitive stem (never a negated word: "no cheese"), else through its
+ * cooking-method class (COOK_CLASS), else — `prefix`, for search-as-you-type — the LAST word as the start of a
+ * name word ("chicken bre"). Hits are ranked by scoreCandidate on the query respelled with the food's own words (so
+ * "eggs" counts for "Egg, whole, …" and the processed / specialty / raw-vs-cooked rules apply exactly as for API
+ * rows), plus HEAD_BONUS when the query covers the food's head noun ("rice" ranks "Rice, white, …" above "Rice
+ * crackers" and "Beans and rice"), minus BRAND_PENALTY for an unasked-for brand row, minus the processed /
+ * specialty penalty for a word only the prefix filled in ("bre" → "breaded"), minus COOK_CLASS_PENALTY.
+ */
+export function searchLocal(index: FoodIndex, query: string, opts: { prefix?: boolean; limit?: number } = {}): LocalSearch {
+  const want = tokens(query);
+  if (!want.length) return { foods: [], good: false };
+  const wantStems = want.map(matchStem);
+  const wantClass = want.map((t) => COOK_CLASS.get(t));
+  const last = want.length - 1;
+  const words = indexWords(query);
+  const hits: { food: PreparedFood; score: number; full: boolean }[] = [];
+  let anyFull = false;
+
+  for (const food of index.foods) {
+    let adjust = 0;
+    const surface: (string | undefined)[] = want.map((t, i) => {
+      const at = food.stems.indexOf(wantStems[i]);
+      if (at >= 0) return food.words[at];
+      if (wantClass[i] != null) {
+        const same = food.stems.findIndex((s) => COOK_CLASS.get(s) === wantClass[i]);
+        if (same >= 0) {
+          adjust -= COOK_CLASS_PENALTY;
+          return food.words[same];
+        }
+      }
+      if (!opts.prefix || i !== last) return undefined;
+      const w = food.words.find((x, j) => food.stems[j] && x.startsWith(t));
+      if (w && PROCESSED_MARKERS.has(w)) adjust -= PROCESSED_PENALTY;
+      else if (w && SPECIALTY_MARKERS.has(w)) adjust -= SPECIALTY_PENALTY;
+      return w;
+    });
+    const matched = surface.filter(Boolean).length;
+    if (!matched || matched * 2 < want.length) continue;
+    const full = matched === want.length;
+    if (!full && anyFull) continue;
+    anyFull ||= full;
+    const respell = new Map(want.map((t, i) => [t, surface[i] ?? t]));
+    const aligned = words.map((w) => respell.get(w) ?? w).join(' ');
+    const covered = new Set(surface);
+    const headWords = food.head.filter((w) => w.length > 1 && !STOPWORDS.has(w));
+    if (headWords.length > 0 && headWords.every((w) => covered.has(w))) adjust += HEAD_BONUS;
+    if (full && want.length > 1 && inOrder(food.words, surface as string[])) adjust += ORDER_BONUS;
+    if (food.brand.length && !food.brand.some((w) => covered.has(w))) adjust -= BRAND_PENALTY;
+    hits.push({ food, score: scoreCandidate(aligned, { description: food.name, dataType: food.dataType }, 0) + adjust, full });
+  }
+
+  const ranked = (anyFull ? hits.filter((h) => h.full) : hits).sort(
+    (a, b) => b.score - a.score || a.food.name.length - b.food.name.length || a.food.fdcId - b.food.fdcId,
+  );
+  return { foods: ranked.slice(0, opts.limit ?? LOCAL_LIMIT).map((h) => choiceFromIndex(h.food)), good: anyFull };
+}
+
+/** `seq` is a subsequence of `words` (each found after the previous one). */
+function inOrder(words: string[], seq: string[]): boolean {
+  let from = 0;
+  for (const w of seq) {
+    const at = words.indexOf(w, from);
+    if (at < 0) return false;
+    from = at + 1;
+  }
+  return true;
+}
+
+/** The bundled index's best GOOD match for a query, or null (no good match, or the index can't load). */
+async function localBestMatch(query: string, load: FoodIndexLoader): Promise<FoodChoice | null> {
+  const index = await load();
+  if (!index) return null;
+  const r = searchLocal(index, query, { limit: 1 });
+  return r.good ? r.foods[0] : null;
 }
 
 // ------------------------------------------------------------------ requests
@@ -532,14 +624,77 @@ export async function searchFoods(query: string, opts: SearchOptions = {}): Prom
   }
 }
 
-/** Best single USDA match for Claude's fdc_query. `budgetMs`: see SearchOptions (ground.ts passes 6 s per item). */
+/**
+ * Best single USDA match for Claude's fdc_query: the bundled index's GOOD match when it has one (no request, so
+ * `demoKey` is false), else the live API's first hit. `budgetMs`: see SearchOptions (ground.ts passes 6 s per
+ * item); it covers the API request only. `localIndex` is injected in tests.
+ */
 export async function bestMatch(
   query: string,
   signal?: AbortSignal,
-  deps: { fetch?: typeof fetch; budgetMs?: number } = {},
+  deps: { fetch?: typeof fetch; budgetMs?: number; localIndex?: FoodIndexLoader } = {},
 ): Promise<{ status: LookupStatus; choice: FoodChoice | null; demoKey: boolean }> {
+  const local = await localBestMatch(query, deps.localIndex ?? (() => loadFoodIndex()));
+  if (local) return { status: 'ok', choice: local, demoKey: false };
   const r = await searchFoods(query, { signal, fetch: deps.fetch, budgetMs: deps.budgetMs });
   if (r.status !== 'ok') return { status: r.status, choice: null, demoKey: r.demoKey };
   const choice = r.foods[0] ?? null;
   return { status: choice ? 'ok' : 'no_match', choice, demoKey: r.demoKey };
+}
+
+export interface FindResult extends UsdaSearchResult {
+  /** Where `foods` came from: the bundled index or the live API. */
+  from: 'bundled' | 'api';
+  /**
+   * Set when the index had only partial matches and the live API couldn't answer: its status. `foods` are then
+   * the index's closest matches, and the sheet says why it shows them.
+   */
+  apiStatus?: Exclude<UsdaStatus, 'ok'>;
+}
+
+export interface FindOptions extends SearchOptions {
+  /** Skip the index and ask the live API ("Search USDA online"). */
+  online?: boolean;
+  /** Wait this long (abortable) before asking the API, so typing doesn't spend DEMO_KEY requests. */
+  liveDelayMs?: number;
+  /** Called right before that wait: the index had no good match (the sheet shows its spinner now). */
+  onLive?: () => void;
+  localIndex?: FoodIndexLoader;
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve(false);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * The search sheet's search: the bundled index first (search-as-you-type prefix matching). GOOD matches there are
+ * the answer, with no request. Otherwise the live API; if it can't answer, the index's partial matches with the
+ * API's status (`apiStatus`), else the API's own outcome.
+ */
+export async function findFoods(query: string, opts: FindOptions = {}): Promise<FindResult> {
+  const q = query.trim().replace(/\s+/g, ' ');
+  const index = q && !opts.online ? await (opts.localIndex ?? (() => loadFoodIndex()))() : null;
+  const local = index ? searchLocal(index, q, { prefix: true }) : null;
+  if (local?.good) return { status: 'ok', foods: local.foods, demoKey: false, from: 'bundled' };
+  opts.onLive?.();
+  if (opts.liveDelayMs && !(await abortableDelay(opts.liveDelayMs, opts.signal))) {
+    return { status: 'failed', foods: [], demoKey: false, from: 'api' };
+  }
+  const live = await searchFoods(q, opts);
+  const partial = local?.foods ?? [];
+  if (partial.length && (live.status !== 'ok' || !live.foods.length)) {
+    return { status: 'ok', foods: partial, demoKey: live.demoKey, from: 'bundled', apiStatus: live.status === 'ok' ? undefined : live.status };
+  }
+  return { ...live, from: 'api' };
 }

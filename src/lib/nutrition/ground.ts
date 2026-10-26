@@ -7,9 +7,10 @@ import type { LookupStatus, MealItem } from './types';
 
 /*
  * Ground Claude's items in USDA: Claude supplies the name, portion, grams and a search phrase; USDA supplies
- * the per-100 g numbers. An item USDA can't match keeps Claude's own estimate (source 'estimate', shown as
- * "Est." in the UI) with the lookup outcome recorded per item, so a rate-limited DEMO_KEY is visible on the
- * rows it affected instead of silently passing estimates off as database values.
+ * the per-100 g numbers — from the bundled offline index when it has a good match (`bundled: true`, no request),
+ * else from the live API (usda.ts bestMatch). An item USDA can't match keeps Claude's own estimate (source
+ * 'estimate', shown as "Est." in the UI) with the lookup outcome recorded per item, so a rate-limited DEMO_KEY is
+ * visible on the rows it affected instead of silently passing estimates off as database values.
  */
 
 export const GROUND_CONCURRENCY = 4;
@@ -104,7 +105,15 @@ export async function groundItems(aiItems: AiItem[], opts: GroundOptions = {}): 
       fdcQuery: ai.fdcQuery || undefined,
     };
     if (status === 'ok' && choice) {
-      return { ...base, per100g: choice.per100g, source: 'usda', matchedName: choice.name, fdcId: choice.fdcId, lookup: 'ok' };
+      return {
+        ...base,
+        per100g: choice.per100g,
+        source: 'usda',
+        matchedName: choice.name,
+        fdcId: choice.fdcId,
+        lookup: 'ok',
+        ...(choice.bundled ? { bundled: true as const } : {}),
+      };
     }
     return {
       ...base,

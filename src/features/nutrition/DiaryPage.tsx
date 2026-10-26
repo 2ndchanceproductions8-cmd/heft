@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, ChevronLeft, ChevronRight, Plus, ScanBarcode, Search, Settings as SettingsIcon, Utensils, Zap } from 'lucide-react';
 import { ActionSheet, Button, EmptyState, IconButton, ListGroup, Loading, Page, SectionHeader, TopBar, toast } from '../../components/ui';
+import { warmFoodIndex } from '../../lib/nutrition/foodIndex';
 import { atForDay, dayKey, shiftDay, sumMeals } from '../../lib/nutrition/math';
 import { createMeal, itemFromChoice, useDayMeals, useTargets, useUnfinishedMeals, type TargetsState } from '../../lib/nutrition/store';
 import { useDayBurn, type DayBurn } from '../../lib/nutrition/burn';
@@ -38,6 +39,13 @@ function DiaryScreen() {
   const targets = useTargets();
   const burn = useDayBurn(day);
   const unfinished = otherDayUnfinished(useUnfinishedMeals(), day);
+
+  // Fetch the offline food index once the diary has drawn, so the service worker holds it before the phone goes
+  // offline (search and photo grounding read it first).
+  useEffect(() => {
+    const t = window.setTimeout(warmFoodIndex, 1500);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const [menu, setMenu] = useState(false);
   const [search, setSearch] = useState(false);

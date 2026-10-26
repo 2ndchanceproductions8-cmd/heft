@@ -1,6 +1,6 @@
 import { format, isValid, parse } from 'date-fns';
 import { dayStart, kcal, macroG } from '../../../lib/nutrition/math';
-import type { Meal, MealItem, Per100g } from '../../../lib/nutrition/types';
+import type { FoodPortion, Meal, MealItem, Per100g } from '../../../lib/nutrition/types';
 
 /*
  * Pure display helpers for the capture / meal / search / scan screens (no hooks, no I/O).
@@ -81,10 +81,14 @@ export function dayLabel(day: string, today: string): string {
   return format(start, 'EEE, MMM d');
 }
 
-/** One-tap amounts for a food: its label serving (when known) and 100 g. */
-export function quickAmounts(servingG: number | null | undefined): { label: string; grams: number }[] {
+/**
+ * One-tap amounts for a food: its label serving (when known), its USDA household measures ("1 cup (158 g)", from
+ * the bundled index) and 100 g.
+ */
+export function quickAmounts(servingG: number | null | undefined, portions: FoodPortion[] = []): { label: string; grams: number }[] {
   const out: { label: string; grams: number }[] = [];
   if (servingG && servingG > 0) out.push({ label: `1 serving (${Math.round(servingG * 10) / 10} g)`, grams: servingG });
+  for (const p of portions) out.push({ label: `${p.label} (${Math.round(p.grams * 10) / 10} g)`, grams: p.grams });
   if (!servingG || Math.abs(servingG - 100) > 0.05) out.push({ label: '100 g', grams: 100 });
   return out;
 }

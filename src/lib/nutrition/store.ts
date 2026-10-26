@@ -291,5 +291,6 @@ export function itemFromChoice(c: FoodChoice, grams: number, name?: string): Mea
     fdcId: c.fdcId,
     barcode: c.barcode,
     lookup: 'ok',
+    ...(c.bundled ? { bundled: true as const } : {}),
   };
 }

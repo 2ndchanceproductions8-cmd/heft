@@ -1,8 +1,13 @@
 import 'fake-indexeddb/auto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import riceFx from './__fixtures__/usda-rice.json';
 import type { AiItem } from './foodAi';
 import { GROUND_ITEM_BUDGET_MS, groundItems } from './ground';
+import { decodeFoodIndex } from './fdcData';
+import { prepareFoods } from './foodIndex';
+import { FOOD_INDEX_FILE } from './foodIndexMeta';
 import { bestMatch, FDC_DATA_TYPES, resetUsdaDataTypeMemo } from './usda';
 import type { FoodChoice, Per100g } from './types';
 
@@ -51,6 +56,28 @@ describe('groundItems', () => {
     expect(stew.matchedName).toBeUndefined();
     expect(sauce).toMatchObject({ source: 'estimate', lookup: 'rate_limited', grams: 5000, baselineGrams: 5000 }); // clamped
     expect(new Set(r.items.map((i) => i.id)).size).toBe(3);
+  });
+
+  it('stubbed-Claude photo items ground in the bundled index with no network; an unknown food still falls back', async () => {
+    const path = fileURLToPath(new URL(`../../../public/${FOOD_INDEX_FILE}`, import.meta.url));
+    const index = prepareFoods(decodeFoodIndex(JSON.parse(readFileSync(path, 'utf8'))));
+    const offline = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    }) as unknown as typeof fetch;
+    const match: Match = (q, signal, deps) => bestMatch(q, signal, { ...deps, fetch: offline, localIndex: async () => index });
+    const r = await groundItems(
+      [ai('Chicken breast', 'chicken breast, roasted', 150), ai('White rice', 'rice, white, cooked', 180), ai('Mystery stew', 'zzzqx stew', 250, 300)],
+      { bestMatch: match },
+    );
+    const [chicken, rice, stew] = r.items;
+    expect(chicken).toMatchObject({ name: 'Chicken breast', source: 'usda', lookup: 'ok', bundled: true, fdcId: 171477, matchedName: 'Chicken, broilers or fryers, breast, meat only, cooked, roasted' });
+    expect(chicken.per100g!.kcal).toBe(165);
+    expect(rice).toMatchObject({ source: 'usda', lookup: 'ok', bundled: true });
+    expect(rice.per100g!.kcal).toBe(130);
+    expect(stew).toMatchObject({ source: 'estimate', lookup: 'failed' }); // no good local match → the API → offline
+    expect(stew).not.toHaveProperty('bundled');
+    expect(offline).toHaveBeenCalledTimes(1); // only the stew asked the API
+    expect(r.demoKey).toBe(true); // the stew's API attempt used DEMO_KEY
   });
 
   it('runs at most 4 lookups at once and keeps item order', async () => {
