@@ -1,5 +1,5 @@
-import { extractPer100g, type FdcNutrient } from './fdcData';
-import { indexWords, loadFoodIndex, matchStem, type FoodIndex, type FoodIndexLoader, type PreparedFood } from './foodIndex';
+import { extractPer100g, type FdcNutrient, type IndexDataType } from './fdcData';
+import { indexWords, loadFoodIndex, matchStem, prepareFoods, type FoodIndex, type FoodIndexLoader, type PreparedFood } from './foodIndex';
 import { FDC_DEMO_KEY, fdcKeyOrDemo } from './keys';
 import type { FoodChoice, LookupStatus } from './types';
 
@@ -136,6 +136,7 @@ const SPECIALTY_MARKERS = new Set([
   'fortified',
   'skin', // "chicken breast" means the meat; Claude says "with skin" when it sees skin
   'meatless', // "Chicken, meatless" is a soy product
+  'chinese', // a different vegetable: "broccoli" is not Chinese broccoli (22 kcal vs 35), "cabbage" not pak-choi
   // concentrated forms: "orange juice" is not the frozen concentrate (148 kcal vs 47), "milk" not evaporated
   'concentrate',
   'evaporated',
@@ -626,20 +627,57 @@ export async function searchFoods(query: string, opts: SearchOptions = {}): Prom
 
 /**
  * Best single USDA match for Claude's fdc_query: the bundled index's GOOD match when it has one (no request, so
- * `demoKey` is false), else the live API's first hit. `budgetMs`: see SearchOptions (ground.ts passes 6 s per
- * item); it covers the API request only. `localIndex` is injected in tests.
+ * `demoKey` is false), else the live API's best SAME-food row (sameFood; none → no_match). `budgetMs`: see
+ * SearchOptions (ground.ts passes 6 s per item); it covers the API request only. `expectKcal100`: Claude's own
+ * kcal per 100 g for the item, which an API row must be within MAX_KCAL_RATIO of. `localIndex` is injected in tests.
  */
 export async function bestMatch(
   query: string,
   signal?: AbortSignal,
-  deps: { fetch?: typeof fetch; budgetMs?: number; localIndex?: FoodIndexLoader } = {},
+  deps: { fetch?: typeof fetch; budgetMs?: number; expectKcal100?: number; localIndex?: FoodIndexLoader } = {},
 ): Promise<{ status: LookupStatus; choice: FoodChoice | null; demoKey: boolean }> {
   const local = await localBestMatch(query, deps.localIndex ?? (() => loadFoodIndex()));
   if (local) return { status: 'ok', choice: local, demoKey: false };
   const r = await searchFoods(query, { signal, fetch: deps.fetch, budgetMs: deps.budgetMs });
   if (r.status !== 'ok') return { status: r.status, choice: null, demoKey: r.demoKey };
-  const choice = r.foods[0] ?? null;
+  const choice = sameFood(query, r.foods, deps.expectKcal100);
   return { status: choice ? 'ok' : 'no_match', choice, demoKey: r.demoKey };
+}
+
+/**
+ * How far an API row's energy density may be from Claude's own estimate (either way). Claude's portion guess can
+ * be far off, but its kcal per gram for a food it named is not: 2× rejects avocado OIL for avocado toast (884 vs
+ * ~210), a 0 kcal seasoning blend, and dry rice for cooked (360 vs 130).
+ */
+export const MAX_KCAL_RATIO = 2;
+
+/**
+ * The best live-API row that is the SAME food as the query, or null. The API answers every query with something
+ * ("avocado toast" → "Oil, avocado", 884 kcal/100 g; "oatmeal, cooked" → "Bread, oatmeal"), and a wrong row
+ * silently replaces Claude's estimate, so a row must pass the bundled index's GOOD rule (searchLocal: every query
+ * word found, by stem or cooking class), name one of the query's words in its head noun (not "Soup, chicken
+ * noodle, …" for "chicken, cooked"), and — given Claude's kcal per 100 g — be within MAX_KCAL_RATIO of it ("Avocado
+ * Toast Seasoning Blend" has every word). No such row → no_match, and grounding keeps Claude's own numbers.
+ */
+export function sameFood(query: string, foods: FoodChoice[], expectKcal100?: number): FoodChoice | null {
+  const rows = foods.filter((c) => c.fdcId != null);
+  if (!rows.length) return null;
+  const byId = new Map(rows.map((c) => [c.fdcId!, c]));
+  const index = prepareFoods(
+    rows.map((c) => ({ fdcId: c.fdcId!, name: c.name, dataType: c.dataType as IndexDataType, per100g: c.per100g, portions: [] })),
+  );
+  const local = searchLocal(index, query, { limit: rows.length });
+  if (!local.good) return null;
+  const wantStems = new Set(tokens(query).map(matchStem));
+  const plausible = (kcal: number) =>
+    !(expectKcal100 && expectKcal100 > 0) || (kcal * MAX_KCAL_RATIO >= expectKcal100 && kcal <= expectKcal100 * MAX_KCAL_RATIO);
+  for (const hit of local.foods) {
+    const head = index.byId.get(hit.fdcId!)!.head;
+    if (!head.some((w) => !STOPWORDS.has(w) && wantStems.has(matchStem(w)))) continue;
+    const row = byId.get(hit.fdcId!);
+    if (row && plausible(row.per100g.kcal)) return row;
+  }
+  return null;
 }
 
 export interface FindResult extends UsdaSearchResult {

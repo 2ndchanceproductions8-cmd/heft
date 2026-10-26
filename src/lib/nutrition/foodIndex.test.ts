@@ -125,6 +125,12 @@ describe('searchLocal (real index)', () => {
     expect(names('blueberries')[0]).toBe('Blueberries, raw');
   });
 
+  it('plain broccoli, not Chinese broccoli (22 kcal vs 35), unless the query says Chinese', () => {
+    expect(names('broccoli, cooked')[0]).toBe('Broccoli, cooked, boiled, drained, without salt');
+    expect(names('broccoli, steamed')[0]).toBe('Broccoli, cooked, boiled, drained, without salt');
+    expect(names('chinese broccoli, cooked')[0]).toBe('Broccoli, chinese, cooked');
+  });
+
   it('cooking words: the exact word first, a same-method word ("grilled" ~ "roasted", "steamed" ~ "boiled") still good', () => {
     expect(names('chicken breast, grilled')[0]).toMatch(/grilled/);
     const broccoli = searchLocal(index, 'broccoli, steamed');
@@ -195,8 +201,8 @@ describe('fallback order: bundled index → live API', () => {
     const m = await bestMatch('rice zzzqx', undefined, { fetch: api.fetch, localIndex: local });
     expect(api.calls).toHaveLength(1);
     expect(new URL(api.calls[0]).searchParams.get('query')).toBe('rice zzzqx');
-    expect(m.status).toBe('ok');
-    expect(m.choice?.bundled).toBeUndefined();
+    // The API's rice rows lack "zzzqx": not the same food (usda.ts sameFood), so Claude's estimate stays.
+    expect(m).toEqual({ status: 'no_match', choice: null, demoKey: true });
 
     const busy = apiStub(429);
     expect(await bestMatch('rice zzzqx', undefined, { fetch: busy.fetch, localIndex: local })).toEqual({ status: 'rate_limited', choice: null, demoKey: true });

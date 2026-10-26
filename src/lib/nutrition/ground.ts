@@ -69,6 +69,8 @@ export async function groundItems(aiItems: AiItem[], opts: GroundOptions = {}): 
   const items = await mapLimit(aiItems, GROUND_CONCURRENCY, async (ai): Promise<MealItem> => {
     const grams = clampWeightG(ai.weightG);
     const query = (ai.fdcQuery || ai.name || '').trim();
+    // Claude's own energy density: a live-API row far from it is a different food (usda.ts sameFood).
+    const expectKcal100 = ai.estimate.kcal > 0 ? (ai.estimate.kcal / grams) * 100 : undefined;
     let status: LookupStatus = 'skipped';
     let choice: Awaited<ReturnType<typeof bestMatch>>['choice'] = null;
     if (query) {
@@ -78,7 +80,7 @@ export async function groundItems(aiItems: AiItem[], opts: GroundOptions = {}): 
         // The budget is bestMatch's to enforce (it knows when the item may send); the cap and the caller's
         // abort win here even against a lookup that ignores its signal.
         const r = await Promise.race([
-          match(query, t.signal, { budgetMs }),
+          match(query, t.signal, { budgetMs, expectKcal100 }),
           new Promise<never>((_res, rej) => {
             if (t.signal.aborted) rej(new Error('aborted'));
             t.signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true });

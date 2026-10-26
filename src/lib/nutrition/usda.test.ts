@@ -11,6 +11,7 @@ import {
   FDC_DATA_TYPES,
   rankFoods,
   resetUsdaDataTypeMemo,
+  sameFood,
   searchFoods,
   type FdcFood,
 } from './usda';
@@ -166,6 +167,54 @@ describe('ranking', () => {
     expect(ranked[0].fdcId).toBe(3);
     const branded = ranked.find((c) => c.fdcId === 1)!;
     expect(branded).toMatchObject({ name: 'Olive Oil', brand: 'Acme Foods', servingG: 15, dataType: 'Branded' });
+  });
+
+  it('plain broccoli beats Chinese broccoli (a different vegetable) unless the query names it', () => {
+    const rows = [row(1, 'Broccoli, chinese, cooked', 22), row(2, 'Broccoli, cooked, boiled, drained, without salt', 35)];
+    expect(rankFoods('broccoli, cooked', rows)[0].fdcId).toBe(2);
+    expect(rankFoods('broccoli, steamed', rows)[0].fdcId).toBe(2);
+    expect(rankFoods('chinese broccoli, cooked', rows)[0].fdcId).toBe(1);
+  });
+});
+
+function row(fdcId: number, description: string, kcal: number, dataType = 'SR Legacy'): FdcFood {
+  return { fdcId, description, dataType, foodNutrients: [{ nutrientNumber: '208', value: kcal }] };
+}
+
+describe('sameFood: a live-API row must be the food Claude named', () => {
+  const choices = (query: string, rows: FdcFood[]) => rankFoods(query, rows);
+
+  it("rejects a row missing one of the query's words (USDA's real top hits, 2026-10-26)", () => {
+    expect(sameFood('avocado toast', choices('avocado toast', [row(1, 'Oil, avocado', 884)]))).toBeNull();
+    expect(sameFood('oatmeal cooked', choices('oatmeal cooked', [row(2, 'Bread, oatmeal', 269)]))).toBeNull();
+  });
+
+  it('rejects a row whose head noun is a different food', () => {
+    const rows = [row(3, 'Soup, chicken noodle, cooked', 30, 'Survey (FNDDS)')];
+    expect(sameFood('chicken cooked', choices('chicken cooked', rows))).toBeNull();
+  });
+
+  it('accepts the same food (Branded included) and skips wrong rows ranked above it', () => {
+    const tikka = [row(4, 'Sauce, tikka masala', 90), row(5, 'CHICKEN TIKKA MASALA', 140, 'Branded')];
+    expect(sameFood('chicken tikka masala', choices('chicken tikka masala', tikka))?.fdcId).toBe(5);
+    const oats = [row(6, 'Bread, oatmeal', 269), row(7, 'Oatmeal, cooked with water', 71, 'Survey (FNDDS)')];
+    expect(sameFood('oatmeal cooked', choices('oatmeal cooked', oats))?.fdcId).toBe(7);
+  });
+
+  it("rejects a row more than 2x off Claude's own kcal per 100 g, either way", () => {
+    const blend = [row(8, 'AVOCADO TOAST SEASONING BLEND, AVOCADO TOAST', 0, 'Branded')];
+    expect(sameFood('avocado toast', choices('avocado toast', blend))).not.toBeNull(); // every word is there…
+    expect(sameFood('avocado toast', choices('avocado toast', blend), 213)).toBeNull(); // …but 0 kcal is not toast
+    const rice = [row(9, 'Rice, white, long-grain, regular, dry', 365), row(10, 'Rice, white, long-grain, regular, cooked', 130)];
+    expect(sameFood('rice white', choices('rice white', rice), 140)?.fdcId).toBe(10);
+    expect(sameFood('rice white', choices('rice white', [rice[0]]), 140)).toBeNull();
+    expect(sameFood('rice white', choices('rice white', [rice[0]]), 200)?.fdcId).toBe(9); // within 2x
+  });
+
+  it('bestMatch: no same-food row on the live API → no_match (grounding keeps Claude)', async () => {
+    const s = stubFetch(() => respond({ status: 200, body: { totalHits: 1, foods: [row(1, 'Oil, avocado', 884)] } }));
+    const m = await bestMatch('avocado toast', undefined, { fetch: s.fetch, expectKcal100: 213, localIndex: async () => null });
+    expect(m).toEqual({ status: 'no_match', choice: null, demoKey: true });
   });
 });
 

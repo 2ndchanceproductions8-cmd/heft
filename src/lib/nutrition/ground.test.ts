@@ -102,10 +102,18 @@ describe('groundItems', () => {
   it('hands the per-item budget to bestMatch, which starts it once the item may send', async () => {
     const match = vi.fn<Match>(async () => ({ status: 'ok', choice: riceChoice, demoKey: false }));
     await groundItems([ai('Rice', 'rice', 100)], { bestMatch: match });
-    expect(match).toHaveBeenCalledWith('rice', expect.any(AbortSignal), { budgetMs: GROUND_ITEM_BUDGET_MS });
+    expect(match).toHaveBeenCalledWith('rice', expect.any(AbortSignal), { budgetMs: GROUND_ITEM_BUDGET_MS, expectKcal100: 100 });
     expect(GROUND_ITEM_BUDGET_MS).toBe(6000);
     await groundItems([ai('Rice', 'rice', 100)], { bestMatch: match, budgetMs: 2500 });
-    expect(match.mock.calls[1][2]).toEqual({ budgetMs: 2500 });
+    expect(match.mock.calls[1][2]).toEqual({ budgetMs: 2500, expectKcal100: 100 });
+  });
+
+  it("hands Claude's kcal per 100 g to bestMatch (none when Claude gave no calories)", async () => {
+    const match = vi.fn<Match>(async () => ({ status: 'no_match', choice: null, demoKey: false }));
+    await groundItems([ai('Avocado toast', 'avocado toast', 150, 320), ai('Water', 'water', 250, 0)], { bestMatch: match });
+    const byQuery = new Map(match.mock.calls.map((c) => [c[0], c[2]]));
+    expect(byQuery.get('avocado toast')?.expectKcal100).toBeCloseTo(213.3, 1);
+    expect(byQuery.get('water')?.expectKcal100).toBeUndefined();
   });
 
   it('a lookup that hangs past the hard cap → failed (estimate kept), even one that ignores its signal', async () => {
@@ -180,11 +188,13 @@ describe('groundItems + the real USDA lookup on a slow network', () => {
     (f: typeof fetch): Match =>
     (q, signal, deps) =>
       bestMatch(q, signal, { ...deps, fetch: f });
+  // Every answer is the rice fixture, so every item is a rice the fixture really has (sameFood checks the words
+  // and Claude's kcal per 100 g against the row).
   const meal = [
-    ai('White rice', 'rice, white, cooked', 180),
-    ai('Chicken', 'chicken breast, roasted', 150),
-    ai('Broccoli', 'broccoli, steamed', 90),
-    ai('Oil', 'olive oil', 10),
+    ai('White rice', 'rice, white, cooked', 180, 234),
+    ai('Short-grain rice', 'rice, white, short-grain, cooked', 150, 195),
+    ai('Medium-grain rice', 'rice, medium-grain, cooked', 90, 117),
+    ai('Long-grain rice', 'rice, long-grain, cooked', 120, 156),
   ];
 
   async function run(f: ReturnType<typeof slowFetch>, ms: number) {
