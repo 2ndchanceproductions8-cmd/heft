@@ -26,6 +26,7 @@ import { distanceUnitForType } from '../../lib/units';
 import { targetFromValues } from '../../lib/workoutStore';
 import { useLogger } from './LoggerContext';
 import { ExerciseRecap } from './ExerciseRecap';
+import { relativeDay } from '../exercises/format';
 import { SetRow } from './SetRow';
 import { RestPickerSheet } from './RestPickerSheet';
 import { VariantSheet } from './VariantSheet';
@@ -49,6 +50,7 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
   const fields = typeFields(ex.type);
   const cols = valueColumns(fields, settings.showRpe);
   const prev = ctx.previousByInstance.get(we.id) ?? null;
+  const lastNote = ctx.recapByExercise.get(we.exerciseId)?.lastNote ?? null;
   // Warm-ups line up with last time's warm-ups and working sets with working sets (not by position).
   const prevAligned = useMemo(() => alignPreviousSets(we.sets, prev), [we.sets, prev]);
   const color = we.supersetId ? ctx.supersetColors.get(we.supersetId) : undefined;
@@ -260,6 +262,19 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
           onChange={(notes) => ops.updateExercise(we.id, { notes })}
           placeholder="Add notes here..."
         />
+        {/* Last session's note, while today's is empty: tap to reuse it (however the workout was started). */}
+        {lastNote && !we.notes?.trim() ? (
+          <button
+            type="button"
+            onClick={() => ops.updateExercise(we.id, { notes: lastNote.text })}
+            aria-label={`Use last note: ${lastNote.text}`}
+            className="mb-1 block w-full rounded-lg text-left text-[14px] leading-snug text-muted active:bg-surface-2"
+          >
+            <span className="font-semibold">Last note · {relativeDay(lastNote.date)}: </span>
+            <span className="whitespace-pre-wrap italic">{lastNote.text}</span>
+            <span className="font-semibold text-accent"> Use</span>
+          </button>
+        ) : null}
       </div>
 
       {/* Rest timer + the left / right switch (every exercise, live and when editing a saved workout) */}

@@ -419,15 +419,23 @@ export interface ExerciseRecap {
   last: { date: number; top: TopSet } | null;
   /** The strongest top set ever (the first time it was reached). */
   best: { date: number; top: TopSet } | null;
+  /** The newest workout note written on this exercise ("Add notes here…"), shown as a hint next session. */
+  lastNote: { date: number; text: string } | null;
 }
 
 /** Last time and best ever for an exercise over saved workouts (newest first, the logger's `history`). */
 export function exerciseRecap(workoutsNewestFirst: Workout[], exerciseId: string, type: ExerciseType): ExerciseRecap {
   let last: ExerciseRecap['last'] = null;
   let best: ExerciseRecap['best'] = null;
+  let lastNote: ExerciseRecap['lastNote'] = null;
   for (const w of workoutsNewestFirst) {
+    const mine = w.exercises.filter((e) => e.exerciseId === exerciseId);
+    if (!lastNote) {
+      const text = mine.map((e) => e.notes?.trim()).find(Boolean);
+      if (text) lastNote = { date: w.startedAt, text };
+    }
     const top = topSet(
-      w.exercises.filter((e) => e.exerciseId === exerciseId).flatMap((e) => e.sets),
+      mine.flatMap((e) => e.sets),
       type,
     );
     if (!top) continue;
@@ -435,7 +443,7 @@ export function exerciseRecap(workoutsNewestFirst: Workout[], exerciseId: string
     // Walking newest → oldest, an EQUAL top set moves the date back to when it was first reached.
     if (!best || compareTopSets(top, best.top, type) >= 0) best = { date: w.startedAt, top };
   }
-  return { last, best };
+  return { last, best, lastNote };
 }
 
 /** The left-vs-right comparison metric for an exercise type (what "stronger side" means for it). */

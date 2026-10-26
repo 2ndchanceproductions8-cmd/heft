@@ -83,7 +83,14 @@ describe('exerciseRecap: last time and best ever', () => {
   });
 
   it('never done → no last, no best', () => {
-    expect(exerciseRecap(history, 'deadlift', 'weight_reps')).toEqual({ last: null, best: null });
+    expect(exerciseRecap(history, 'deadlift', 'weight_reps')).toEqual({ last: null, best: null, lastNote: null });
+  });
+
+  it('last note = the newest note written on the exercise, even from a session before the last one', () => {
+    const noted = (w: Workout, notes: string): Workout => ({ ...w, exercises: w.exercises.map((e) => ({ ...e, notes })) });
+    const h = [history[0], noted(history[1], '  Seat on 4, pin at 7  '), noted(history[2], 'old note'), history[3]];
+    expect(exerciseRecap(h, 'bench', 'weight_reps').lastNote).toEqual({ date: t0 + 14 * DAY, text: 'Seat on 4, pin at 7' });
+    expect(exerciseRecap([noted(history[0], '   ')], 'bench', 'weight_reps').lastNote).toBeNull();
   });
 
   it('every instance of the exercise in a workout counts (a heavy block and a back-off block)', () => {
