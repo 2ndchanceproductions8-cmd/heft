@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { PRKind, PRRecord, SetEntry, Settings, Workout, WorkoutExercise } from '../../types';
-import { bestsByExercise, detectPRs, type Bests } from '../../lib/calc';
+import { bestsByExercise, detectPRs, exerciseRecap, type Bests, type ExerciseRecap } from '../../lib/calc';
 import { useExercises } from '../../lib/ExerciseProvider';
 import type { NewExerciseItem } from '../../lib/workoutStore';
 import { previousInstanceSets, type SupersetColor } from './logic';
@@ -30,6 +30,8 @@ export interface LoggerContextValue {
   settings: Settings;
   /** Previous session's sets per exercise INSTANCE id (null = never done before). */
   previousByInstance: Map<string, SetEntry[] | null>;
+  /** Last time and best ever per EXERCISE id (the card's recap strip; missing while history loads). */
+  recapByExercise: Map<string, ExerciseRecap>;
   /** PR kinds credited to each set id (live). */
   prsBySet: Map<string, PRKind[]>;
   supersetColors: Map<string, SupersetColor>;
@@ -95,6 +97,18 @@ export function usePreviousSets(
     }
     return map;
   }, [key, history, mode, routineId]);
+}
+
+/** Last time and best ever for every exercise in the list, over `history` (newest first; empty while loading). */
+export function useRecaps(exercises: WorkoutExercise[], history: Workout[] | undefined): Map<string, ExerciseRecap> {
+  const index = useExercises();
+  const key = [...new Set(exercises.map((e) => e.exerciseId))].join('|');
+  return useMemo(() => {
+    const map = new Map<string, ExerciseRecap>();
+    if (!history) return map;
+    for (const id of key ? key.split('|') : []) map.set(id, exerciseRecap(history, id, index.get(id).type));
+    return map;
+  }, [key, history, index]);
 }
 
 /** Current time, re-rendered every `intervalMs` (and immediately when the app becomes visible). */

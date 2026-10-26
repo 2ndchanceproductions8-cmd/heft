@@ -14,6 +14,7 @@ import {
   useBests,
   useLivePRs,
   usePreviousSets,
+  useRecaps,
   type ExerciseOps,
   type LoggerContextValue,
   type LoggerMode,
@@ -62,6 +63,7 @@ export function WorkoutExerciseList({
   const index = useExercises();
 
   const previousByInstance = usePreviousSets(exercises, history, settings.previousValues, routineId);
+  const recapByExercise = useRecaps(exercises, history);
   const bests = useBests(history);
   const prs = useLivePRs(exercises, bests);
   const colors = useMemo(() => supersetColors(exercises), [exercises]);
@@ -187,6 +189,7 @@ export function WorkoutExerciseList({
     exercises,
     settings,
     previousByInstance,
+    recapByExercise,
     prsBySet,
     supersetColors: colors,
     onSetCompleted: onSetCompleted ?? (() => undefined),

@@ -25,6 +25,7 @@ import { joinSet, sidesDiffer, splitSet } from '../../lib/sides';
 import { distanceUnitForType } from '../../lib/units';
 import { targetFromValues } from '../../lib/workoutStore';
 import { useLogger } from './LoggerContext';
+import { ExerciseRecap } from './ExerciseRecap';
 import { SetRow } from './SetRow';
 import { RestPickerSheet } from './RestPickerSheet';
 import { VariantSheet } from './VariantSheet';
@@ -236,6 +237,9 @@ export function ExerciseCard({ we }: { we: WorkoutExercise }) {
           <MoreHorizontal className="h-6 w-6" />
         </IconButton>
       </div>
+
+      {/* Last time · best ever · how today compares */}
+      <ExerciseRecap exerciseId={we.exerciseId} type={ex.type} />
 
       {/* Pinned (sticky) note */}
       {ex.notes ? (

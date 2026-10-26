@@ -359,6 +359,85 @@ export function exerciseSessions(workouts: Workout[], exerciseId: string, type: 
   return rows;
 }
 
+// ---------------------------------------------------------------- last time vs best ever (the logger's recap)
+
+/** The strongest limb of a session as one set ("135 lb x 8"); side = which arm/leg on a per-side set. */
+export interface TopSet extends SideValues {
+  side: Side | null;
+}
+
+/**
+ * What "stronger" means for an exercise type, most important first: the heaviest weight, more reps at it
+ * breaking a tie (Justin: "the highest weight I did"); reps for bodyweight; time or distance for cardio.
+ * Assisted reps ignore the weight (it is assistance, not load).
+ */
+export function topSetKeys(type: ExerciseType): ('weightKg' | 'reps' | 'durationSec' | 'distanceM')[] {
+  switch (type) {
+    case 'weight_reps':
+    case 'weighted_bodyweight':
+      return ['weightKg', 'reps'];
+    case 'duration_weight':
+      return ['weightKg', 'durationSec'];
+    case 'weight_distance':
+      return ['weightKg', 'distanceM'];
+    case 'bodyweight_reps':
+    case 'assisted_bodyweight':
+      return ['reps'];
+    case 'duration':
+      return ['durationSec'];
+    case 'distance_duration':
+      return ['distanceM'];
+  }
+}
+
+/** >0 when `a` is the stronger top set, <0 when weaker, 0 when the same (topSetKeys order). */
+export function compareTopSets(a: SideValues, b: SideValues, type: ExerciseType): number {
+  for (const k of topSetKeys(type)) {
+    const d = (a[k] ?? 0) - (b[k] ?? 0);
+    if (Math.abs(d) > 1e-6) return d;
+  }
+  return 0;
+}
+
+/** The strongest limb over the done working sets (warm-ups don't count), or null when nothing was logged. */
+export function topSet(sets: SetEntry[], type: ExerciseType): TopSet | null {
+  let top: TopSet | null = null;
+  for (const s of sets) {
+    if (!isRecordSet(s)) continue;
+    for (const l of setLimbs(s)) {
+      if (!topSetKeys(type).some((k) => (l.values[k] ?? 0) > 0)) continue;
+      if (!top || compareTopSets(l.values, top, type) > 0) {
+        top = { weightKg: l.values.weightKg, reps: l.values.reps, durationSec: l.values.durationSec, distanceM: l.values.distanceM, side: l.side };
+      }
+    }
+  }
+  return top;
+}
+
+export interface ExerciseRecap {
+  /** The most recent workout that had the exercise. */
+  last: { date: number; top: TopSet } | null;
+  /** The strongest top set ever (the first time it was reached). */
+  best: { date: number; top: TopSet } | null;
+}
+
+/** Last time and best ever for an exercise over saved workouts (newest first, the logger's `history`). */
+export function exerciseRecap(workoutsNewestFirst: Workout[], exerciseId: string, type: ExerciseType): ExerciseRecap {
+  let last: ExerciseRecap['last'] = null;
+  let best: ExerciseRecap['best'] = null;
+  for (const w of workoutsNewestFirst) {
+    const top = topSet(
+      w.exercises.filter((e) => e.exerciseId === exerciseId).flatMap((e) => e.sets),
+      type,
+    );
+    if (!top) continue;
+    last ??= { date: w.startedAt, top };
+    // Walking newest → oldest, an EQUAL top set moves the date back to when it was first reached.
+    if (!best || compareTopSets(top, best.top, type) >= 0) best = { date: w.startedAt, top };
+  }
+  return { last, best };
+}
+
 /** The left-vs-right comparison metric for an exercise type (what "stronger side" means for it). */
 export type SideMetric = 'best1RM' | 'heaviestKg' | 'maxReps' | 'maxDuration' | 'maxDistance';
 
