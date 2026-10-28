@@ -1,19 +1,17 @@
 import { useMemo } from 'react';
 import { format } from 'date-fns';
-import { ArrowDown, ArrowUp, Equal, Trophy } from 'lucide-react';
+import { Trophy } from 'lucide-react';
 import type { ExerciseType, Settings } from '../../types';
-import { cx } from '../../components/ui';
 import { compareTopSets, topSet, topSetKeys, type TopSet } from '../../lib/calc';
 import { formatClock, formatDistanceForType, formatWeight } from '../../lib/units';
-import { relativeDay } from '../exercises/format';
 import { useLogger } from './LoggerContext';
 import { formatSetSummary } from './logic';
 
 /*
- * The strip under an exercise card's header: what you did LAST TIME and your BEST EVER (the top set: heaviest
- * weight, more reps breaking a tie — lib/calc.ts topSetKeys), and once a set is ticked today, whether today's top
- * set beat last time and the all-time best. Justin: "so I know if I got stronger this week from the week before
- * and all time score". Every instance of the exercise in this workout counts toward today.
+ * The strip under an exercise card's header: your ALL-TIME BEST (the top set: heaviest weight, more reps breaking a
+ * tie — lib/calc.ts topSetKeys), and once a set is ticked today, how today's top set compares to it. Last time lives
+ * in the PREVIOUS column only (Justin, 10-27: "remove best from last time. just all time high is fine"). Every
+ * instance of the exercise in this workout counts toward today.
  */
 export function ExerciseRecap({ exerciseId, type }: { exerciseId: string; type: ExerciseType }) {
   const { recapByExercise, exercises, settings } = useLogger();
@@ -28,44 +26,25 @@ export function ExerciseRecap({ exerciseId, type }: { exerciseId: string; type: 
   );
   if (!recap) return null;
 
-  const { last, best } = recap;
-  if (!last || !best) {
+  const { best } = recap;
+  if (!best) {
     return <p className="mx-3 mb-1 text-[13px] text-muted">First time logging this — today sets your baseline.</p>;
   }
 
-  const vsLast = today ? compareTopSets(today, last.top, type) : null;
   const vsBest = today ? compareTopSets(today, best.top, type) : null;
-  const show = (t: TopSet) => topText(t, type, settings);
 
   return (
     <div className="mx-3 mb-1">
-      <div className="grid grid-cols-2 gap-2">
-        <div className="min-w-0 rounded-xl bg-surface-2 px-2.5 py-1.5">
-          <div className="truncate text-[11px] font-semibold tracking-wide text-muted">
-            LAST TIME · {relativeDay(last.date).toUpperCase()}
-          </div>
-          <div className="truncate text-[15px] font-semibold tabular-nums">{show(last.top)}</div>
-        </div>
-        <div className="min-w-0 rounded-xl bg-surface-2 px-2.5 py-1.5">
-          <div className="flex items-center gap-1 truncate text-[11px] font-semibold tracking-wide text-muted">
-            <Trophy className="h-3 w-3 shrink-0 text-gold" strokeWidth={2.5} />
-            BEST · {format(best.date, 'MMM d, yyyy').toUpperCase()}
-          </div>
-          <div className="truncate text-[15px] font-semibold tabular-nums">{show(best.top)}</div>
-        </div>
+      <div className="flex items-center gap-2 rounded-xl bg-surface-2 px-2.5 py-1.5">
+        <Trophy className="h-4 w-4 shrink-0 text-gold" strokeWidth={2.5} />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-wide text-muted">
+          ALL-TIME BEST · {format(best.date, 'MMM d, yyyy').toUpperCase()}
+        </span>
+        <span className="shrink-0 text-[15px] font-semibold tabular-nums">{topText(best.top, type, settings)}</span>
       </div>
 
-      {today && vsLast != null && vsBest != null ? (
+      {today && vsBest != null ? (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[13px] font-semibold" aria-live="polite">
-          <span
-            className={cx(
-              'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-              vsLast > 0 ? 'bg-success-soft text-success' : vsLast < 0 ? 'bg-danger-soft text-danger' : 'bg-surface-2 text-muted',
-            )}
-          >
-            {vsLast > 0 ? <ArrowUp className="h-3.5 w-3.5" /> : vsLast < 0 ? <ArrowDown className="h-3.5 w-3.5" /> : <Equal className="h-3.5 w-3.5" />}
-            {vsLast === 0 ? 'Same as last time' : `${deltaText(today, last.top, type, settings)} vs last time`}
-          </span>
           {vsBest > 0 ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-gold-soft px-2 py-0.5 text-gold">
               <Trophy className="h-3.5 w-3.5" strokeWidth={2.5} />
