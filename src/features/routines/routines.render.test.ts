@@ -115,6 +115,13 @@ describe('routines feature renders', () => {
     expect(runHtml).toContain('value="1"');
   });
 
+  it('editor page: Save, or Save & Start when the user chose to start a workout too', () => {
+    const plain = text(inDataRouter('/routines/new', '/routines/new', h(RoutineEditorPage)));
+    expect(plain).not.toContain('Save & Start');
+    const start = text(inDataRouter('/routines/new?start=1', '/routines/new', h(RoutineEditorPage)));
+    expect(start).toContain('Save & Start');
+  });
+
   it('editor page (new routine) renders the form', () => {
     const html = text(inDataRouter('/routines/new?folder=f1', '/routines/new', h(RoutineEditorPage)));
     expect(html).toContain('Create Routine');

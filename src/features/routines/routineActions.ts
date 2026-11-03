@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { confirm, prompt, toast } from '../../components/ui';
 import { beginWorkout } from '../../lib/startWorkout';
 import { createFolderLast, deleteFolder, deleteRoutine, duplicateRoutineLast, renameFolder } from '../../lib/routines';
@@ -14,6 +14,26 @@ export async function attempt<T>(fn: () => Promise<T>, errorMessage: string): Pr
     toast(errorMessage, 'error');
     return undefined;
   }
+}
+
+/**
+ * Every "new routine" button goes through here. A routine only PLANS: nothing is logged until a workout is
+ * started, and Justin built one expecting it to log the session. So the question comes FIRST, before anything is
+ * built: yes opens the editor with `?start=1`, and saving then starts the workout with no further question.
+ */
+export async function startNewRoutine(navigate: NavigateFunction, folderId?: string | null): Promise<void> {
+  const alsoStart = await confirm({
+    title: 'Start a workout too?',
+    message:
+      'A routine only plans your exercises. Nothing is logged until you start a workout. Start a workout with this routine as soon as you save it?',
+    confirmLabel: 'Yes, start workout',
+    cancelLabel: 'No, just the routine',
+  });
+  const query = new URLSearchParams();
+  if (folderId) query.set('folder', folderId);
+  if (alsoStart) query.set('start', '1');
+  const qs = query.toString();
+  navigate(`/routines/new${qs ? `?${qs}` : ''}`);
 }
 
 const folderNameRule = (v: string) => (v.trim() ? null : 'Enter a folder name');

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronDown, FolderPlus, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 import { ActionSheet, IconButton, cx } from '../../components/ui';
 import type { RoutineFolder } from '../../types';
-import { confirmDeleteFolder, promptRenameFolder } from './routineActions';
+import { confirmDeleteFolder, promptRenameFolder, startNewRoutine } from './routineActions';
 
 /**
  * Collapsible routine group ("My Routines" or a custom folder). Custom folders get a ⋯ menu:
@@ -60,7 +60,7 @@ export function FolderSection({
               <span className="text-[14px] text-muted">No routines in this folder yet.</span>
               <button
                 type="button"
-                onClick={() => nav(`/routines/new?folder=${encodeURIComponent(folder.id)}`)}
+                onClick={() => void startNewRoutine(nav, folder.id)}
                 className="flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[14px] font-semibold text-accent active:bg-surface-2"
               >
                 <Plus className="h-4 w-4" />
@@ -83,7 +83,7 @@ export function FolderSection({
             {
               label: 'Add Routine Here',
               icon: <FolderPlus className="h-5 w-5" />,
-              onClick: () => nav(`/routines/new?folder=${encodeURIComponent(folder.id)}`),
+              onClick: () => void startNewRoutine(nav, folder.id),
             },
             {
               label: 'Delete Folder',

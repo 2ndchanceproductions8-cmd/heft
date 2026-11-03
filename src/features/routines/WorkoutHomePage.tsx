@@ -10,7 +10,7 @@ import { ActiveWorkoutCard } from './ActiveWorkoutCard';
 import { FolderSection } from './FolderSection';
 import { RoutineCard } from './RoutineCard';
 import { ReorderRow, SortableList } from './SortableList';
-import { attempt, promptNewFolder, useLocalFlag } from './routineActions';
+import { attempt, promptNewFolder, startNewRoutine, useLocalFlag } from './routineActions';
 import { flattenGroupOrder } from './routineUtils';
 import { addStarterRoutines } from './starterRoutines';
 
@@ -132,7 +132,7 @@ export function WorkoutHomePage() {
 
       {!reorder ? (
         <div className="grid grid-cols-2 gap-3 px-4">
-          <Button variant="secondary" icon={<ClipboardList className="h-[18px] w-[18px]" />} onClick={() => nav('/routines/new')}>
+          <Button variant="secondary" icon={<ClipboardList className="h-[18px] w-[18px]" />} onClick={() => void startNewRoutine(nav)}>
             New Routine
           </Button>
           <Button variant="secondary" icon={<FolderPlus className="h-[18px] w-[18px]" />} onClick={() => void promptNewFolder()}>
@@ -244,7 +244,7 @@ function FirstRunCard() {
         pre-fills every set for you.
       </p>
       <div className="mt-5 space-y-2.5">
-        <Button block size="lg" icon={<Plus className="h-5 w-5" />} onClick={() => nav('/routines/new')}>
+        <Button block size="lg" icon={<Plus className="h-5 w-5" />} onClick={() => void startNewRoutine(nav)}>
           Create Routine
         </Button>
         <Button block size="lg" variant="soft" disabled={adding} icon={<Sparkles className="h-5 w-5" />} onClick={() => void addStarter()}>

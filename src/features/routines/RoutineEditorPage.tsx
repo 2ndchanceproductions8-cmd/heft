@@ -68,6 +68,7 @@ export function RoutineEditorPage() {
   const location = useLocation();
   const [params] = useSearchParams();
   const folderParam = params.get('folder');
+  const startParam = params.get('start') === '1';
   const fromDetail = !!(location.state as { fromDetail?: boolean } | null)?.fromDetail;
 
   const routine = useRoutine(id);
@@ -206,19 +207,11 @@ export function RoutineEditorPage() {
     // Saved: stay in the "Saving…" state while we navigate away so a late tap can't save a second copy.
     leaving.current = true;
     toast('Routine saved', 'success');
-    // A NEW routine only plans: it logs nothing until it is started. Ask, so "I made a routine" can't be mistaken for
-    // "I did the workout" (Justin made a routine thinking it logged the session).
-    if (isNew) {
-      const startNow = await confirm({
-        title: 'Start this workout now?',
-        message: 'Saving a routine only plans it. Nothing is logged until you start the workout and tick off your sets.',
-        confirmLabel: 'Start Workout',
-        cancelLabel: 'Not Now',
-      });
-      if (startNow) {
-        const created = await db.routines.get(savedId);
-        if (created && (await beginWorkout({ type: 'routine', routine: created }, nav))) return;
-      }
+    // Said yes to "Start a workout too?" when the routine was begun (routineActions.ts startNewRoutine): start it
+    // now, with no second question.
+    if (isNew && startParam) {
+      const created = await db.routines.get(savedId);
+      if (created && (await beginWorkout({ type: 'routine', routine: created }, nav))) return;
     }
     // Coming from the routine page: just pop back to it (no duplicate history entry).
     if (!isNew && fromDetail && historyIdx() > 0) nav(-1);
@@ -328,7 +321,7 @@ export function RoutineEditorPage() {
       left={<BarTextButton onClick={() => void cancel()}>Cancel</BarTextButton>}
       right={
         <BarTextButton strong onClick={() => void save()} disabled={saving || !draft}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? 'Saving…' : isNew && startParam ? 'Save & Start' : 'Save'}
         </BarTextButton>
       }
     />
