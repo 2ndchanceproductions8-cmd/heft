@@ -27,6 +27,7 @@ import { beginWorkout } from '../../lib/startWorkout';
 import { formatDuration, formatVolume } from '../../lib/units';
 import { createRoutineFromWorkout, deleteWorkout, useWorkout } from '../../lib/workouts';
 import { CelebrationCard } from './CelebrationCard';
+import { CoachCard } from './CoachCard';
 import { SendToHealthButton } from './SendToHealthButton';
 import { ExerciseLog } from './ExerciseLog';
 import { HistoryErrorBoundary } from './HistoryErrorBoundary';
@@ -241,6 +242,9 @@ export function WorkoutDetail({
         />
       ) : null}
 
+      {/* Right after finishing, the coach review sits under the celebration; on an old workout it follows the stats. */}
+      {celebrate ? <CoachCard workout={w} /> : null}
+
       <div className="px-4 pt-5">
         <h1 className="text-2xl leading-tight font-bold tracking-tight break-words">{w.name || 'Workout'}</h1>
         <p className="mt-1 text-[14px] text-muted tabular-nums">{formatWorkoutDateRange(w.startedAt, endedAt)}</p>
@@ -279,6 +283,8 @@ export function WorkoutDetail({
 
       {/* Right after finishing, the celebration card carries this button. */}
       {celebrate ? null : <SendToHealthButton workout={w} className="mx-4 mt-3 w-[calc(100%-2rem)]" />}
+
+      {celebrate ? null : <CoachCard workout={w} />}
 
       {w.notes?.trim() ? (
         <p className="mx-4 mt-3 rounded-2xl bg-surface p-4 text-[15px] leading-relaxed break-words whitespace-pre-wrap">

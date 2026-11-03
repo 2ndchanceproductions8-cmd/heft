@@ -15,6 +15,7 @@ import { useExercises } from '../../lib/ExerciseProvider';
 import { typeFields } from '../../lib/exerciseMeta';
 import { createRoutine, nextRoutineOrder, saveRoutine, useFolders, useRoutine } from '../../lib/routines';
 import { useSettings } from '../../lib/settings';
+import { beginWorkout } from '../../lib/startWorkout';
 import { useWorkouts } from '../../lib/workouts';
 import type { PickedExercise } from '../../lib/workoutStore';
 import type { Routine, RoutineExercise } from '../../types';
@@ -205,6 +206,20 @@ export function RoutineEditorPage() {
     // Saved: stay in the "Saving…" state while we navigate away so a late tap can't save a second copy.
     leaving.current = true;
     toast('Routine saved', 'success');
+    // A NEW routine only plans: it logs nothing until it is started. Ask, so "I made a routine" can't be mistaken for
+    // "I did the workout" (Justin made a routine thinking it logged the session).
+    if (isNew) {
+      const startNow = await confirm({
+        title: 'Start this workout now?',
+        message: 'Saving a routine only plans it. Nothing is logged until you start the workout and tick off your sets.',
+        confirmLabel: 'Start Workout',
+        cancelLabel: 'Not Now',
+      });
+      if (startNow) {
+        const created = await db.routines.get(savedId);
+        if (created && (await beginWorkout({ type: 'routine', routine: created }, nav))) return;
+      }
+    }
     // Coming from the routine page: just pop back to it (no duplicate history entry).
     if (!isNew && fromDetail && historyIdx() > 0) nav(-1);
     else nav(`/routines/${savedId}`, { replace: true });
