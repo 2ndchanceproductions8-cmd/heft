@@ -6,6 +6,22 @@ export interface PickerSelection {
   pick: PickedExercise;
 }
 
+export type PickerTab = 'all' | 'routines' | 'recent' | 'mine';
+
+/**
+ * The tabs of the Add-Exercise picker. "Routines" is left out where routines make no sense (adding to a routine's
+ * own editor); "Created" (your own exercises and variants) only exists once you have made at least one, so a user
+ * who has not created anything never sees it.
+ */
+export function pickerTabs(opts: { hideRoutines?: boolean; hasCreated: boolean }): { value: PickerTab; label: string }[] {
+  return [
+    { value: 'all', label: 'All' },
+    ...(opts.hideRoutines ? [] : [{ value: 'routines' as const, label: 'Routines' }]),
+    { value: 'recent', label: 'Recent' },
+    ...(opts.hasCreated ? [{ value: 'mine' as const, label: 'Created' }] : []),
+  ];
+}
+
 export const exKey = (id: string) => `ex:${id}`;
 export const rtKey = (routineId: string, routineExerciseId: string) => `rt:${routineId}:${routineExerciseId}`;
 

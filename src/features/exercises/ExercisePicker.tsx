@@ -5,7 +5,7 @@ import type { Equipment, Exercise, Muscle, Routine, RoutineExercise } from '../.
 import type { PickedExercise } from '../../lib/workoutStore';
 import { Button, Chip, EmptyState, Loading, Segmented, Sheet, cx } from '../../components/ui';
 import { useExercises } from '../../lib/ExerciseProvider';
-import { searchExercises } from '../../lib/exercises';
+import { isMine, searchExercises } from '../../lib/exercises';
 import { useFolders, useRoutines } from '../../lib/routines';
 import { useSettings } from '../../lib/settings';
 import { ExerciseActions } from './ExerciseActions';
@@ -16,7 +16,7 @@ import { FilterBar, SearchField } from './FilterSheets';
 import { formatSetValue, relativeDay, routineSetsSummary } from './format';
 import { hasFinePointer, scrollParent, useExerciseUsage } from './hooks';
 import { HeaderButton } from './parts';
-import { browseRoutineId, exKey, rtKey, selectCreated, type PickerSelection } from './selection';
+import { browseRoutineId, exKey, pickerTabs, rtKey, selectCreated, type PickerSelection, type PickerTab } from './selection';
 import { readPref, writePref } from '../progress/format';
 import { bestSet, usedFirst, usedInfo } from './stats';
 
@@ -49,8 +49,8 @@ export function ExercisePicker(props: ExercisePickerProps) {
   return <PickerSheet {...props} />;
 }
 
-type Tab = 'all' | 'routines' | 'recent';
-const TABS: readonly Tab[] = ['all', 'routines', 'recent'];
+type Tab = PickerTab;
+const TABS: readonly Tab[] = ['all', 'routines', 'recent', 'mine'];
 /** localStorage (heft.<key>): the tab the add picker opens on. */
 const TAB_PREF = 'picker.tab';
 
@@ -90,16 +90,24 @@ function PickerSheet({
 
   const [query, setQuery] = useState('');
   const q = useDeferredValue(query);
+  // What the user made: created exercises, gym/brand variants, renamed or photographed ones. The "Created" tab only
+  // exists while there is at least one, so a user who has made none never sees it.
+  const mineAll = useMemo(() => index.list.filter((e) => isMine(e) && !e.hidden && !e.missing), [index.list]);
   // Replace (single) always starts on All; adding reopens on the tab used last (e.g. Routines).
   const [tab, setTabState] = useState<Tab>(() => {
     if (single) return 'all';
     const t = readPref(TAB_PREF, TABS, 'all');
-    return t === 'routines' && hideRoutinesTab ? 'all' : t;
+    if (t === 'routines' && hideRoutinesTab) return 'all';
+    return t === 'mine' && !mineAll.length ? 'all' : t;
   });
   const setTab = (t: Tab) => {
     setTabState(t);
     if (!single) writePref(TAB_PREF, t);
   };
+  // The last created exercise was deleted from this sheet: the tab is gone, so leave it.
+  useEffect(() => {
+    if (tab === 'mine' && !mineAll.length) setTabState('all');
+  }, [tab, mineAll.length]);
   const [pickedRoutineId, setPickedRoutineId] = useState<string | null>(null);
   const chipsRef = useRef<HTMLDivElement>(null);
   const [equipment, setEquipment] = useState<Equipment | null>(null);
@@ -189,6 +197,12 @@ function PickerSheet({
     }
     return out;
   }, [usage, index, matchesFilters]);
+
+  // The Created tab: yours only, through the same search and filters as All (the ones you use most first).
+  const mine = useMemo(() => {
+    const found = searchExercises(mineAll, q, { equipment, muscle });
+    return q.trim() ? usedFirst(found, usage) : found;
+  }, [mineAll, q, equipment, muscle, usage]);
 
   const recentFiltered = useMemo(() => {
     if (!recent || !q.trim()) return recent;
@@ -331,6 +345,32 @@ function PickerSheet({
         )}
       </>
     );
+  } else if (tab === 'mine') {
+    content = mine.length ? (
+      <>
+        <ListLabel right={<span className="text-[12px] text-faint tabular-nums">{mine.length.toLocaleString()}</span>}>
+          Created by you
+        </ListLabel>
+        <IncrementalList items={mine} resetKey={`mine|${q}|${equipment}|${muscle}`} renderItem={row} />
+      </>
+    ) : (
+      <EmptyState
+        icon={<SearchX className="h-7 w-7" />}
+        title="No matches"
+        message={
+          q.trim()
+            ? `None of your created exercises match “${q.trim()}”.`
+            : 'None of your created exercises match these filters.'
+        }
+        action={
+          filtersActive ? (
+            <Button variant="ghost" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          ) : undefined
+        }
+      />
+    );
   } else if (tab === 'recent') {
     if (!recentFiltered) content = <Loading />;
     else if (!recentFiltered.length)
@@ -445,11 +485,7 @@ function PickerSheet({
 
   const n = selected.length;
   const picks = selected.map((s) => s.pick);
-  const tabs: { value: Tab; label: string }[] = [
-    { value: 'all', label: 'All' },
-    ...(hideRoutinesTab ? [] : [{ value: 'routines' as Tab, label: 'Routines' }]),
-    { value: 'recent', label: 'Recent' },
-  ];
+  const tabs = pickerTabs({ hideRoutines: hideRoutinesTab, hasCreated: mineAll.length > 0 });
 
   return (
     <>

@@ -30,6 +30,7 @@ describe('ExercisePicker (SSR smoke)', () => {
     expect(html).toContain('Create');
     expect(html).toContain('Routines');
     expect(html).toContain('Recent');
+    expect(html).not.toContain('Created'); // nothing created yet, so no Created tab
     expect(html).toContain('All Equipment');
     expect(html).toContain('All Muscles');
     expect(html).toContain('All Exercises');

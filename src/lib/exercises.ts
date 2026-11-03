@@ -146,6 +146,13 @@ const norm = (s: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+/**
+ * An exercise that is YOURS: one you created (including a gym/brand variant, which is a custom exercise), a
+ * catalog exercise you renamed, or one you gave your own photo. The Exercises tab's "My Exercises" and the add
+ * picker's "Created" tab both use it.
+ */
+export const isMine = (ex: Exercise): boolean => ex.source === 'custom' || ex.name !== ex.originalName || ex.photoIds.length > 0;
+
 export interface ExerciseFilter {
   equipment?: Equipment | null;
   muscle?: Muscle | null;

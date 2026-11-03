@@ -4,7 +4,7 @@ import { EyeOff, Plus, SearchX, Sparkles } from 'lucide-react';
 import type { Equipment, Exercise, Muscle } from '../../types';
 import { Button, EmptyState, IconButton, ListGroup, ListRow, Page, Segmented, Toggle, TopBar } from '../../components/ui';
 import { useExercises } from '../../lib/ExerciseProvider';
-import { searchExercises } from '../../lib/exercises';
+import { isMine, searchExercises } from '../../lib/exercises';
 import { ExerciseActions } from './ExerciseActions';
 import { IncrementalList } from './ExerciseList';
 import { ExerciseRow } from './ExerciseRow';
@@ -23,9 +23,6 @@ const memory = {
   showHidden: false,
   count: 60,
 };
-
-/** Custom exercises, gym/brand variants, and anything the owner renamed or photographed. */
-const isMine = (ex: Exercise) => ex.source === 'custom' || ex.name !== ex.originalName || ex.photoIds.length > 0;
 
 export function ExerciseLibraryPage() {
   const index = useExercises();
